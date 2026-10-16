@@ -21,28 +21,17 @@ Upload `dist/tab-retitler-<version>.zip`, made by running `./build.sh`.
 **Description:**
 
 ```
-Too many tabs that all say the same thing? Tab Retitler renames them, and marks their icons, using what's on each page.
+Tab Retitler renames tabs and changes their icons based on each page's URL and content.
 
-Type the title you want, and it works out the rule
-Open the side panel on any page and type the title you'd like, such as "4521 · Garden tools" instead of "Shop – Product page". Tab Retitler finds where each part comes from (the address, the page title, or text on the page) and writes the rule for you. Switch to another tab on the same site and do the same; it keeps every rule that fits your examples and narrows them down as you go, asking you on other open tabs when it's unsure.
+Type the title you want for a tab, like "4521 · Garden tools" instead of "Shop – Product page", and it works out the rule. Give it a few more tabs from the same site and it finds a rule that fits all of them. It can also change case and turn URL slugs like "fix-login-redirect" into "Fix login redirect".
 
-It understands addresses like "/posts/fix-login-redirect" and can turn them into "Fix login redirect", changing case and turning dashes into spaces when that's what you typed.
+Icons can get a dot, a short text badge, an outline or a tint. They can follow the page too: green when a task says Done, blue when it says In Review.
 
-Icons that tell you something
-• Add a dot or short text badge to a site's own icon: round, square or a corner flag, in any corner and size.
-• Outline or tint the icon, or fade and gray it out.
-• Let the icon follow the page: a green dot when a task is "Done", blue when it's "In Review", nothing otherwise. Tab Retitler suggests colors from the page's own status labels.
+You edit rules in the side panel, and the tab updates as you type. You can pick page text with the mouse, turn rules on and off, and share them as a short code or a JSON file.
 
-The tab is the preview
-Edits apply to your open tabs as you type, and the side panel shows how the rule does on the tab you're looking at, with the actual values it finds there.
+Nothing leaves your computer. No account, no tracking. It only runs on sites you allow.
 
-Also
-• Pick text on the page with your mouse instead of writing CSS selectors.
-• Turn rules on and off, reorder them, and see only the ones for the current site.
-• Share rules as a short code or a readable JSON file, and import them with a preview of what each rule does.
-
-Private by design
-Your rules and everything Tab Retitler reads stay on your computer. Nothing is sent anywhere, there's no account, and no analytics. It only runs on sites you allow, one at a time.
+Source code: https://github.com/ignaciofh9/tab-retitler
 ```
 
 ## Privacy practices
