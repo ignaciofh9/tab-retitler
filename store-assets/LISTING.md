@@ -74,6 +74,7 @@ Tick all three certifications:
 | Store icon | 128×128 | `tab-retitler/icons/icon-128.png` (96×96 artwork with padding, as the store asks) |
 | Screenshots | 1280×800 | `store-assets/screenshot-*.png` |
 | Small promo tile | 440×280 | `store-assets/promo-small.png` |
+| Marquee promo tile (optional, only used if featured) | 1400×560 | `store-assets/promo-marquee.png` |
 
 ## Before you submit
 
