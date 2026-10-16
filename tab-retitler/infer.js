@@ -962,6 +962,7 @@ self.Infer = (() => {
   // Words in selectors that say nothing about what the value is: tags,
   // selector syntax, generic names, and common utility classes (Tailwind etc.).
   const NAME_SKIP = new Set(["div", "span", "a", "p", "li", "td", "nth", "of", "type", "data", "testid", "test", "id",
+    "html", "body", "main", "section", "article", "header", "footer", "nav", "aside",
     "val", "value", "field", "item", "text", "label", "content", "title", "view", "views", "base", "the",
     "truncate", "flex", "grid", "block", "inline", "hidden", "max", "min", "prose", "font", "bold", "semibold",
     "medium", "small", "large", "center", "left", "right", "top", "bottom", "items", "justify", "gap", "rounded",
@@ -991,6 +992,8 @@ self.Infer = (() => {
     else if (/^\d+$/.test(piece)) name = "num";
     else if (/^[A-Z]+-\d+$/.test(piece)) name = "key";
     else if (words.length) name = words[0];
+    // A heading with nothing more telling about it.
+    else if (source.from === "element" && /(^|[\s>])h[1-3]$/.test(source.selector)) name = "heading";
     else if (source.from === "url" && source.hint?.length >= 3) name = source.hint;
     else if (piece.includes(" ")) name = "summary";
     else if (source.from === "url") name = "part";

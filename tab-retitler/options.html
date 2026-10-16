@@ -165,11 +165,22 @@
     </main>
   </div>
 
+  <div class="board-zoom" id="board-zoom" hidden aria-hidden="true">
+    <img alt="">
+    <span class="board-marks"></span>
+  </div>
+
   <template id="board-row-tpl">
     <div class="board-row">
-      <canvas class="case-icon board-icon" width="32" height="32" aria-hidden="true"></canvas>
+      <button class="board-thumb" type="button" title="Go to this tab">
+        <img alt="">
+        <span class="board-marks" aria-hidden="true"></span>
+      </button>
       <div class="board-page">
-        <div class="board-title"></div>
+        <div class="board-name">
+          <canvas class="board-icon" width="32" height="32" aria-hidden="true"></canvas>
+          <span class="board-title"></span>
+        </div>
         <div class="board-path"></div>
       </div>
       <div class="board-want">
@@ -179,9 +190,6 @@
       <div class="board-actions">
         <button class="btn icon" type="button" data-action="icon" title="Icon for this tab" aria-label="Icon for this tab" aria-expanded="false">
           <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11.5" cy="11.5" r="2.8" fill="currentColor"/></svg>
-        </button>
-        <button class="btn icon" type="button" data-action="go" title="Go to this tab" aria-label="Go to this tab">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5h6.5V10M12.5 3.5L4 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <button class="btn icon" type="button" data-action="clear" title="Clear this example" aria-label="Clear this example">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>

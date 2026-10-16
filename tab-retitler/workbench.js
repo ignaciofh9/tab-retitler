@@ -67,6 +67,7 @@ async function loadBoard(previous) {
   board.rows = rows;
   buildBoardRows();
   boardChanged();
+  refreshShots();
 }
 
 // Examples changed: teach from them again.
@@ -170,7 +171,9 @@ function boardRow(row) {
     editor: $(".board-icon-editor", root),
     iconBtn: $("[data-action=icon]", root),
     clear: $("[data-action=clear]", root),
-    go: $("[data-action=go]", root),
+    thumb: $(".board-thumb", root),
+    img: $(".board-thumb img", root),
+    marks: $(".board-thumb .board-marks", root),
   };
   boardRefs.set(row, refs);
   $(".board-title", root).textContent = row.title || hostPath(row.url);
@@ -203,12 +206,18 @@ function boardRow(row) {
     }
     boardChanged();
   });
-  refs.go.addEventListener("click", async () => {
+  refs.thumb.addEventListener("click", async () => {
+    if (row.closed) return;
     const tab = await chrome.tabs.get(row.tabId).catch(() => null);
     if (!tab) return;
     await chrome.tabs.update(tab.id, { active: true });
     await chrome.windows.update(tab.windowId, { focused: true });
   });
+  refs.thumb.addEventListener("mouseenter", () => showZoom(row));
+  refs.thumb.addEventListener("mouseleave", hideZoom);
+  refs.thumb.addEventListener("focus", () => showZoom(row));
+  refs.thumb.addEventListener("blur", hideZoom);
+  if (row.shot) refs.img.src = row.shot.data;
   return root;
 }
 
@@ -228,7 +237,7 @@ function renderBoardRow(row) {
     refs.input.classList.toggle("guess", !!showGuess);
   }
   refs.input.placeholder = row.closed ? "" : "Type the title you want";
-  refs.go.hidden = !!row.closed;
+  refs.thumb.title = row.closed ? "This tab is closed" : "Go to this tab";
   refs.clear.hidden = !example;
   refs.clear.title = row.closed ? "Remove this example" : "Clear this example";
   refs.clear.setAttribute("aria-label", refs.clear.title);
@@ -281,6 +290,81 @@ async function harvestRow(row) {
     row.picked = mergePicked(row.picked, page.picked);
   }
   boardChanged();
+}
+
+// ---------- Pictures of the tabs ----------
+
+// Each tab draws a small picture of what's on its screen (see snapshot() in
+// content.js). Asked for when the view opens, when a tab finishes loading,
+// and when you come back to this view from another tab.
+let shotRun = 0;
+async function refreshShots(rows = teach?.board?.rows ?? []) {
+  const run = ++shotRun;
+  for (const row of rows) {
+    if (row.closed || !row.tabId) continue;
+    const shot = await askTab(row.tabId, { type: "snapshot", width: 480 });
+    if (run !== shotRun || !teach?.board?.rows.includes(row)) return;
+    if (!shot?.data) continue;
+    row.shot = shot;
+    const refs = boardRefs.get(row);
+    if (refs) refs.img.src = shot.data;
+  }
+}
+
+let zoomTimer;
+function showZoom(row) {
+  clearTimeout(zoomTimer);
+  if (!row.shot) return;
+  zoomTimer = setTimeout(() => {
+    const refs = boardRefs.get(row);
+    const zoom = $("#board-zoom");
+    if (!refs || !zoom) return;
+    $("img", zoom).src = row.shot.data;
+    $(".board-marks", zoom).replaceChildren(...[...refs.marks.children].map((m) => m.cloneNode(true)));
+    zoom.hidden = false;
+    // Beside the picture, or below it when there's no room.
+    const r = refs.thumb.getBoundingClientRect();
+    const w = zoom.offsetWidth;
+    const h = zoom.offsetHeight;
+    const right = r.right + 12 + w <= innerWidth - 8;
+    const left = right ? r.right + 12 : Math.max(8, Math.min(r.left, innerWidth - w - 8));
+    const top = right ? Math.max(8, Math.min(r.top - 20, innerHeight - h - 8)) : Math.min(r.bottom + 8, innerHeight - h - 8);
+    Object.assign(zoom.style, { left: `${left}px`, top: `${top}px` });
+  }, 200);
+}
+
+function hideZoom() {
+  clearTimeout(zoomTimer);
+  const zoom = $("#board-zoom");
+  if (zoom) zoom.hidden = true;
+}
+
+// While a value is hovered in the rule card: where it is on every tab's
+// picture, or an arrow when it's further down the page.
+let markRun = 0;
+async function markBoard(source, color) {
+  const run = ++markRun;
+  document.body.style.setProperty("--mark", color || "var(--accent)");
+  for (const row of teach?.board?.rows ?? []) {
+    const refs = boardRefs.get(row);
+    if (!refs || row.closed || !row.shot) continue;
+    const at = await askTab(row.tabId, { type: "locate", source });
+    if (run !== markRun) return;
+    const marks = [];
+    if (at?.below || at?.above) {
+      marks.push(Object.assign(document.createElement("b"), { className: at.below ? "below" : "above", textContent: at.below ? "↓" : "↑" }));
+    } else if (at) {
+      const box = document.createElement("i");
+      Object.assign(box.style, { left: `${at.left * 100}%`, top: `${at.top * 100}%`, width: `${at.width * 100}%`, height: `${at.height * 100}%` });
+      marks.push(box);
+    }
+    refs.marks.replaceChildren(...marks);
+  }
+}
+
+function unmarkBoard() {
+  markRun++;
+  for (const refs of boardRefs.values()) refs.marks.replaceChildren();
 }
 
 // ---------- A row's icon ----------
@@ -413,9 +497,10 @@ async function syncBoardTabs() {
     else board.rows.push({ tabId: tab.id, ...page, want: "", look: null, hint: null, picked: page.picked ?? [], guess: null });
     changedRows = true;
   }
-  if (!changedRows) return;
+  if (!changedRows) return refreshShots();
   buildBoardRows();
   boardChanged();
+  refreshShots();
 }
 
 function wireBoard() {
@@ -426,6 +511,10 @@ function wireBoard() {
     loadBoard(teach.saved);
   });
   watchBoardTabs();
+  // Back from another tab: what's on the tabs may have changed.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && teach?.board) refreshShots();
+  });
 }
 
 // From the side panel's teaching view: carry on in a full tab, with the
@@ -438,7 +527,15 @@ async function openBoardTab() {
     ({ tabId, url, title, elements, styled, picked, meta, labels, want, look, hint }));
   await chrome.storage.session.set({ "board:draft": { host, ruleId: teach?.ruleId ?? null, examples } });
   closeTeach();
-  await chrome.tabs.create({ url: chrome.runtime.getURL("options.html?board") });
+  const tab = live?.tab;
+  await chrome.tabs.create({ url: chrome.runtime.getURL("options.html?board"), ...(tab ? { windowId: tab.windowId, index: tab.index + 1 } : {}) });
+  // The view has everything the panel did, so the panel gets out of the way.
+  try {
+    if (chrome.sidePanel?.close && tab) await chrome.sidePanel.close({ windowId: tab.windowId });
+    else window.close();
+  } catch {
+    window.close();
+  }
 }
 
 // A full tab opened for teaching on all tabs picks up where the panel was.

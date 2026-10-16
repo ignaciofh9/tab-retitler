@@ -1608,8 +1608,8 @@ function renderAsks(tabsChecked = 0) {
   if (teach.asks.length && fit.results.every((r) => r.ok)) {
     $("#teach-note").textContent = "Answer the question above to narrow it down, or switch to another tab on the site and type its title.";
   }
-  if (fit?.count > 1 && !teach.asks.length && tabsChecked) {
-    const note = $("#teach-undecided");
+  const note = $("#teach-undecided");
+  if (fit?.count > 1 && !teach.asks.length && tabsChecked && note.textContent) {
     note.hidden = false;
     note.append(" Your other open tabs on this site come out the same either way, so it doesn't matter yet.");
   }
@@ -1667,7 +1667,7 @@ function renderTeach(examples) {
     });
     seg.append(value, name, from);
     // Hovering shows where it is on the tab showing.
-    pointAt(seg, () => teach?.current?.tabId ?? ex.tabId, p.source, `{${p.name}}`);
+    pointAt(seg, () => teach?.current?.tabId ?? ex.tabId, p.source, `{${p.name}}`, seg.style.getPropertyValue("--seg"));
     return seg;
   }));
 
@@ -1676,10 +1676,14 @@ function renderTeach(examples) {
 
   // Values whose source is still undecided.
   const undecided = fit.count > 0 ? fit.parts.filter((p) => p.lit === undefined && p.options.length > 1) : [];
-  $("#teach-undecided").textContent = undecided
-    .map((p) => `{${p.name}} could come ${p.options.map((o) => describeSource(o, ex)).join(" or ")}.`)
+  // Places that read the same in words (two ways to find the page heading)
+  // aren't worth asking about.
+  const places = (p) => [...new Set(p.options.map((o) => describeSource(o, ex)))];
+  const unclear = undecided.filter((p) => places(p).length > 1);
+  $("#teach-undecided").textContent = unclear
+    .map((p) => `{${p.name}} could come ${places(p).join(" or ")}.`)
     .join(" ");
-  $("#teach-undecided").hidden = !undecided.length;
+  $("#teach-undecided").hidden = !unclear.length;
 
   // Every example, and whether the rule gets it right.
   $("#teach-examples").replaceChildren(...examples.map((e, i) => {
@@ -1814,7 +1818,7 @@ function describeSource(src, ex) {
 // is read from and scrolls to it. tabId(), and source and label when they're
 // functions, are asked each time, since they can change. Only for values that
 // sit in one place on the page.
-function pointAt(el, tabId, source, label) {
+function pointAt(el, tabId, source, label, color) {
   if (!chrome.tabs?.connect) return;
   const now = (x) => (typeof x === "function" ? x() : x);
   const usable = () => {
@@ -1824,9 +1828,12 @@ function pointAt(el, tabId, source, label) {
   let port = null;
   const show = () => {
     hide();
-    const id = tabId();
-    if (!id || !usable()) return;
+    if (!usable()) return;
     const src = now(source);
+    // On the all-tabs view, also on every tab's picture.
+    if (teach?.board) markBoard({ from: src.from, selector: src.selector }, color);
+    const id = tabId();
+    if (!id) return;
     try {
       port = chrome.tabs.connect(id, { name: "highlight" });
       port.onDisconnect.addListener(() => void chrome.runtime.lastError);
@@ -1838,6 +1845,7 @@ function pointAt(el, tabId, source, label) {
   const hide = () => {
     port?.disconnect();
     port = null;
+    if (teach?.board) unmarkBoard();
   };
   if (typeof source !== "function") {
     if (!usable()) return;
@@ -1902,14 +1910,15 @@ let scopeRun = 0;
 async function renderScope() {
   const box = $("#teach-scope");
   const fit = teach?.fit;
-  box.hidden = !fit?.paths?.length || (fit.count === 0 && !!fit.split);
+  const paths = teach?.paths?.length ? teach.paths : fit?.paths ?? [];
+  box.hidden = !paths.length || (fit.count === 0 && !!fit.split);
   if (box.hidden) return;
   const list = $("#teach-scope-list");
   const describe = (p) => {
     if (!p) return `Every page on ${fit.host}`;
     return p.endsWith("/**") ? "These pages and any below them" : "Only pages with exactly this shape";
   };
-  list.replaceChildren(...fit.paths.map((p) => {
+  list.replaceChildren(...paths.map((p) => {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "scope-option";

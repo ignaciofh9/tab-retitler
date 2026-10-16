@@ -249,6 +249,8 @@
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === "harvest") return sendResponse(harvest(msg.want || "", msg.extra));
     if (msg.type === "picked") return sendResponse(picked(msg.selectors));
+    if (msg.type === "snapshot") return sendResponse(snapshot(msg.width));
+    if (msg.type === "locate") return sendResponse(locate(msg.source));
     // What each candidate source gives on this page, to find where the
     // possible rules disagree.
     if (msg.type === "probe") {
@@ -325,6 +327,154 @@
       frame = requestAnimationFrame(follow);
     });
     return { remove: () => { cancelAnimationFrame(frame); host.remove(); } };
+  }
+
+  // ---------- A small picture of the page ----------
+
+  // For the all-tabs teaching view: the top of what's on screen, drawn from
+  // the page's layout rather than captured (capturing other tabs needs access
+  // to every site). Boxes with their colors, large text as text, the rest as
+  // lines. Images show as gray boxes, since most can't be copied. Works in
+  // background tabs too.
+  function snapshot(width = 480) {
+    const vw = document.documentElement.clientWidth || innerWidth;
+    const vh = Math.min(innerHeight, Math.round(vw * 0.625));
+    const k = width / vw;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = Math.round(vh * k);
+    const g = canvas.getContext("2d");
+    g.scale(k, k);
+    const color = (c) => {
+      const m = String(c).match(/[\d.]+/g);
+      return m && m.length >= 3 && (m[3] === undefined || Number(m[3]) > 0.05) ? c : null;
+    };
+    const rootStyle = getComputedStyle(document.documentElement);
+    const bodyStyle = document.body ? getComputedStyle(document.body) : rootStyle;
+    g.fillStyle = color(rootStyle.backgroundColor) || color(bodyStyle.backgroundColor) || "#fff";
+    g.fillRect(0, 0, vw, vh);
+
+    const started = performance.now();
+    const inFrame = (r) => r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw;
+    const visible = (st) => st.display !== "none" && st.visibility !== "hidden" && Number(st.opacity) > 0.05;
+    const MEDIA = new Set(["img", "svg", "video", "canvas", "picture", "iframe"]);
+    const texts = [];
+    const walker = document.createTreeWalker(document.body ?? document.documentElement, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (node.nodeType === Node.TEXT_NODE) return node.textContent.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        if (SKIP.has(node.localName) && node.localName !== "svg") return NodeFilter.FILTER_REJECT;
+        if (node.localName.startsWith("tab-retitler")) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    for (let node = walker.nextNode(), n = 0; node && n < 4000 && performance.now() - started < 150; node = walker.nextNode(), n++) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        texts.push(node);
+        continue;
+      }
+      const el = node;
+      const r = el.getBoundingClientRect();
+      const st = getComputedStyle(el);
+      if (!visible(st)) {
+        walker.currentNode = lastInside(el);
+        continue;
+      }
+      // Below the picture, and nothing inside can be above it.
+      if (r.top >= vh && st.position !== "fixed" && st.position !== "absolute") {
+        walker.currentNode = lastInside(el);
+        continue;
+      }
+      if (!inFrame(r)) continue;
+      const radius = Math.min(parseFloat(st.borderTopLeftRadius) || 0, r.height / 2, r.width / 2);
+      const box = () => { g.beginPath(); g.roundRect(r.left, r.top, r.width, r.height, radius); };
+      if (MEDIA.has(el.localName)) {
+        box();
+        g.fillStyle = "rgb(128 128 128 / 0.22)";
+        g.fill();
+        if (el.localName !== "picture") walker.currentNode = lastInside(el);
+        continue;
+      }
+      const bg = color(st.backgroundColor);
+      if (bg) {
+        box();
+        g.fillStyle = bg;
+        g.fill();
+      }
+      if (st.backgroundImage !== "none" && !bg) {
+        box();
+        g.fillStyle = "rgb(128 128 128 / 0.14)";
+        g.fill();
+      }
+      const bw = parseFloat(st.borderTopWidth) || 0;
+      const bc = bw >= 1 && st.borderTopStyle !== "none" && color(st.borderTopColor);
+      if (bc) {
+        box();
+        g.lineWidth = Math.max(1, bw);
+        g.strokeStyle = bc;
+        g.stroke();
+      }
+    }
+
+    // Text after the boxes, so it's on top of its background.
+    const range = document.createRange();
+    for (const node of texts) {
+      if (performance.now() - started > 250) break;
+      const el = node.parentElement;
+      if (!el) continue;
+      range.selectNodeContents(node);
+      const rects = [...range.getClientRects()].filter(inFrame);
+      if (!rects.length) continue;
+      const st = getComputedStyle(el);
+      if (!visible(st) || clippedAway(el)) continue;
+      const size = parseFloat(st.fontSize) || 16;
+      g.fillStyle = color(st.color) || "#000";
+      // Big enough to read when small: draw the words.
+      if (size * k >= 6 && rects.length === 1) {
+        g.font = `${st.fontStyle} ${st.fontWeight} ${st.fontSize} ${st.fontFamily}`;
+        g.textBaseline = "middle";
+        const r = rects[0];
+        g.fillText(node.textContent.replace(/\s+/g, " ").trim(), r.left, r.top + r.height / 2, r.width + 2);
+        continue;
+      }
+      g.globalAlpha = 0.45;
+      for (const r of rects) {
+        const h = Math.max(1, r.height * 0.5);
+        g.beginPath();
+        g.roundRect(r.left, r.top + (r.height - h) / 2, r.width, h, h / 2);
+        g.fill();
+      }
+      g.globalAlpha = 1;
+    }
+    return { data: canvas.toDataURL("image/jpeg", 0.72), width: vw, height: vh };
+  }
+
+  // Text hidden for screen readers only: squeezed into a tiny clipped box.
+  function clippedAway(el) {
+    for (let e = el, up = 0; e && up < 4; e = e.parentElement, up++) {
+      const r = e.getBoundingClientRect();
+      if (r.width <= 2 || r.height <= 2) return true;
+      const st = getComputedStyle(e);
+      if ((st.clip && st.clip !== "auto") || (st.clipPath && st.clipPath !== "none" && /inset\(50%|circle\(0/.test(st.clipPath))) return true;
+    }
+    return false;
+  }
+
+  // The last node inside el, to skip past everything it contains.
+  function lastInside(el) {
+    let last = el;
+    while (last.lastChild) last = last.lastChild;
+    return last;
+  }
+
+  // Where a value's element is, in the same frame as snapshot(): for marking
+  // it on the picture. below: it's further down than the picture shows.
+  function locate(source) {
+    const el = TR.sourceElement(source);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth || innerWidth;
+    const vh = Math.min(innerHeight, Math.round(vw * 0.625));
+    return { left: r.left / vw, top: r.top / vh, width: r.width / vw, height: r.height / vh, below: r.top >= vh, above: r.bottom <= 0 };
   }
 
   chrome.storage.onChanged.addListener((changes, area) => {

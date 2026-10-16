@@ -1019,16 +1019,71 @@ body:not(.panel)[data-view="board"] #board { display: block; }
 
 .board-row {
   display: grid;
-  grid-template-columns: 32px minmax(0, 0.8fr) minmax(0, 1.4fr) auto;
+  grid-template-columns: 160px minmax(0, 0.8fr) minmax(0, 1.4fr) 64px;
   gap: 4px 14px;
   align-items: start;
   padding: 12px 16px;
   border-top: 1px solid var(--border);
 }
 .board-row:first-child { border-top: 0; }
-.board-icon { margin-top: 3px; }
-.board-page { min-width: 0; padding-top: 2px; }
-.board-title { font-size: 13.5px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.board-page { min-width: 0; padding-top: 2px; display: grid; gap: 2px; }
+.board-name { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.board-icon { width: 18px; height: 18px; flex: none; border-radius: 4px; }
+.board-title { font-size: 13.5px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* A small picture of each tab; click to go there, hover to see it bigger. */
+.board-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.board-thumb:hover, .board-thumb:focus-visible { border-color: var(--accent); outline: none; }
+.board-thumb img, .board-zoom img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top left; }
+.board-thumb img:not([src]), .board-zoom img:not([src]) { visibility: hidden; }
+.board-row.closed .board-thumb { cursor: default; border-style: dashed; }
+.board-marks { position: absolute; inset: 0; pointer-events: none; }
+.board-marks i {
+  position: absolute;
+  border: 2px solid var(--mark, var(--accent));
+  background: color-mix(in srgb, var(--mark, var(--accent)) 25%, transparent);
+  border-radius: 3px;
+  min-width: 6px;
+  min-height: 6px;
+  box-shadow: 0 0 0 2px rgb(255 255 255 / 0.7), 0 0 10px var(--mark, var(--accent));
+}
+/* Further down (or up) the page than the picture shows. */
+.board-marks b {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font: 700 11px/1 var(--mono);
+  color: #fff;
+  background: var(--mark, var(--accent));
+  border-radius: 999px;
+  padding: 3px 7px;
+}
+.board-marks b.below { bottom: 4px; }
+.board-marks b.above { top: 4px; }
+.board-zoom {
+  position: fixed;
+  z-index: 50;
+  width: 480px;
+  max-width: calc(100vw - 32px);
+  aspect-ratio: 16 / 10;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.35);
+  pointer-events: none;
+}
+.board-zoom[hidden] { display: none; }
 .board-path { font-size: 12px; color: var(--faint); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .board-want { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
 .board-want input.guess { color: var(--muted); font-style: italic; }
@@ -1037,11 +1092,10 @@ body:not(.panel)[data-view="board"] #board { display: block; }
 .board-status .bad { color: var(--danger); overflow-wrap: anywhere; }
 .board-status .ask { color: var(--text); font-weight: 600; }
 .board-status .btn.choice { white-space: normal; overflow-wrap: anywhere; text-align: left; }
-.board-actions { display: flex; align-items: center; gap: 2px; }
+.board-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
 .board-actions .btn.icon[aria-expanded="true"] { color: var(--accent-text); background: var(--accent-soft); }
 .board-icon-editor { grid-column: 2 / -1; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 10px 12px; margin-top: 4px; border-radius: 10px; background: var(--surface-2); }
 .board-icon-editor > .btn { justify-self: start; }
-.board-row.example .board-icon { box-shadow: 0 0 0 2px var(--ok-soft); }
 .board-row.closed { opacity: 0.7; }
 .board-row.out .board-title, .board-row.out .board-path { color: var(--faint); }
 .teach-board-open { margin: -6px 0 14px; }
@@ -1053,7 +1107,7 @@ body:not(.panel)[data-view="board"] #board { display: block; }
 }
 @media (max-width: 640px) {
   .board { padding: 20px 16px 48px; }
-  .board-row { grid-template-columns: 32px minmax(0, 1fr) auto; }
+  .board-row { grid-template-columns: 112px minmax(0, 1fr) 64px; }
   .board-actions { grid-column: 3; grid-row: 1; }
   .board-want { grid-column: 2 / -1; }
   .board-icon-editor { grid-column: 1 / -1; }
