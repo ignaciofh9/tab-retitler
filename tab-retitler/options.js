@@ -1119,15 +1119,86 @@ async function loadTeachTab() {
   }
 
   // Coming back to a tab that's already an example picks up where you left off.
+  // Otherwise start from the best guess for this tab, if there's a rule (or
+  // examples) to guess from, else from the page's own title.
   const prior = teach.saved.find((e) => e.url === page.url);
   teach.saved = teach.saved.filter((e) => e !== prior);
-  teach.current = { tabId: tab.id, ...page, want: prior?.want ?? page.title, look: prior?.look ?? null, hint: prior?.hint ?? null };
+  const guess = prior ? null : await guessFor(tab.id, page);
+  if (!teach) return;
+  teach.current = {
+    tabId: tab.id,
+    ...page,
+    want: prior?.want ?? guess?.title ?? page.title,
+    look: prior?.look ?? guess?.look ?? null,
+    hint: prior?.hint ?? null,
+    // A guess isn't an example until it's edited or confirmed.
+    guessed: !!guess,
+  };
   input.disabled = false;
   input.value = teach.current.want;
   $("#teach-original").textContent = page.title;
-  setTeachHint("Start from the page's own title and edit it into what you want.", false);
+  syncGuess();
   renderTeachIcon();
   await harvestWant();
+}
+
+// What the rule would give on this tab: for a rule being taught again, what it
+// does here right now; for a new rule, the simplest one that fits the
+// examples so far. null when there's nothing to go on, or the rule wouldn't
+// apply to this tab.
+async function guessFor(tabId, page) {
+  const rule = teach.ruleId && rules.find((r) => r.id === teach.ruleId);
+  if (rule) {
+    const res = (await inspectTab(tabId, rule))?.result;
+    if (!res?.matched) return null;
+    const sw = rule.badgeSwitch;
+    const hasIcon = sw.enabled || !!TR.resolveBadge(rule.badge, {});
+    const chosen = res.caseId ? sw.cases.find((c) => c.id === res.caseId)?.badge : rule.badge;
+    return { title: res.title, look: hasIcon ? TR.newLook(chosen) : null };
+  }
+
+  if (!teach.saved.length) return null;
+  const fit = Infer.fit(teach.saved);
+  if (!fit?.count) return null;
+  const [variant] = Infer.variants(fit, 1);
+  const lookFit = Infer.fitLook(teach.saved, fit);
+  // The value the icon switches on may be one the title doesn't use.
+  const keySource = lookFit?.mode === "switch"
+    ? (lookFit.newVar ? { from: "element", selector: lookFit.newVar.selector, regex: "" } : fit.parts.find((p) => p.name === lookFit.on)?.source)
+    : null;
+  const sources = [...variant.map((p) => p.source), keySource].filter((s) => s && s.from !== "builtin");
+  const res = await askTab(tabId, { type: "probe", sources });
+  if (!res) return null;
+  const valueOf = (src) => src.from === "builtin"
+    ? (src.name === "title" ? page.title.replace(/\s+/g, " ").trim() : new URL(page.url).hostname)
+    : res.values[sources.indexOf(src)];
+  const values = variant.map((p) => (p.lit !== undefined ? p.lit : valueOf(p.source)));
+  if (variant.some((p, i) => p.source && !values[i])) return null; // a required value is missing here
+
+  let look = null;
+  if (lookFit?.mode === "always") look = lookFit.look;
+  if (lookFit?.mode === "switch") {
+    const key = (keySource && valueOf(keySource) || "").toLowerCase();
+    look = lookFit.cases.find((c) => c.value.toLowerCase() === key)?.look ?? TR.newLook();
+  }
+  return { title: values.join(""), look };
+}
+
+// Shows whether the box holds a guess, with the Looks right button.
+function syncGuess() {
+  const guessed = !!teach?.current?.guessed;
+  $("#teach-guess").hidden = !guessed;
+  $("#teach-hint").hidden = guessed;
+  if (!guessed) setTeachHint("Start from the page's own title and edit it into what you want.", false);
+}
+
+// Editing or confirming a guess makes it a real example.
+function confirmGuess() {
+  const cur = teach?.current;
+  if (!cur?.guessed) return;
+  cur.guessed = false;
+  cur.confirmed = true;
+  syncGuess();
 }
 
 function setTeachHint(text, isError) {
@@ -1141,7 +1212,7 @@ function setTeachHint(text, isError) {
 function teachTabChanged() {
   const cur = teach?.current;
   if (cur && live?.tab?.id === cur.tabId && live.tab.url === cur.url) return; // same page, e.g. its title just changed
-  if (cur && cur.want.trim() && (cur.want !== cur.title || cur.look)) teach.saved.push(cur);
+  if (cur && !cur.guessed && cur.want.trim() && (cur.want !== cur.title || cur.look || cur.confirmed)) teach.saved.push(cur);
   loadTeachTab();
 }
 
@@ -1159,7 +1230,8 @@ async function harvestWant() {
 }
 
 function teachExamples() {
-  return [...teach.saved, ...(teach.current?.want.trim() ? [teach.current] : [])];
+  const cur = teach.current;
+  return [...teach.saved, ...(cur && !cur.guessed && cur.want.trim() ? [cur] : [])];
 }
 
 function refit() {
@@ -1436,6 +1508,7 @@ function renderTeachIcon() {
   const box = $("#teach-icon-look");
   box.hidden = !cur.look;
   box.replaceChildren(...(cur.look ? [badgeEditor(cur.look, () => {
+    confirmGuess();
     paintTeachPreview();
     renderSuggestions();
     refit();
@@ -1474,6 +1547,7 @@ function renderSuggestions() {
       b.append(Object.assign(document.createElement("span"), { className: "suggest-more", textContent: `+${s.more.length}` }));
     }
     b.addEventListener("click", () => {
+      confirmGuess();
       // Check again on click: the badge style may have changed since drawing.
       if (cur.look && cur.look.style === "none") {
         // Outline (adding a thin one if there's neither) and/or tint take the color.
@@ -1526,11 +1600,13 @@ function renderTeachLook() {
 
 function wireTeach() {
   $("#teach-icon-add").addEventListener("click", () => {
+    confirmGuess();
     teach.current.look = TR.newLook({ style: "dot" });
     renderTeachIcon();
     refit();
   });
   $("#teach-icon-remove").addEventListener("click", () => {
+    confirmGuess();
     teach.current.look = null;
     teach.current.hint = null;
     renderTeachIcon();
@@ -1538,8 +1614,13 @@ function wireTeach() {
   });
   $("#teach-back").addEventListener("click", closeTeach);
   $("#teach-save").addEventListener("click", saveTeach);
+  $("#teach-confirm").addEventListener("click", () => {
+    confirmGuess();
+    refit();
+  });
   $("#teach-want").addEventListener("input", (e) => {
     if (!teach?.current) return;
+    confirmGuess();
     teach.current.want = e.target.value;
     clearTimeout(teachTimer);
     teachTimer = setTimeout(harvestWant, 200);
