@@ -412,6 +412,10 @@ function validateVar(rule, v, row) {
   if (v.from === "element") {
     if (!v.selector.trim()) selectorErr = "Add a CSS selector for the element to read.";
     else if (!isValidSelector(v.selector)) selectorErr = "That CSS selector isn't valid.";
+  } else if (v.from === "meta" && !v.selector.trim()) {
+    selectorErr = "Add the metadata key to read, like og:title.";
+  } else if (v.from === "label" && !v.selector.trim()) {
+    selectorErr = "Add the label's text, like Status.";
   }
 
   const regexErr = v.regex && TR.regexError(v.regex);
@@ -456,13 +460,28 @@ function varRow(rule, v) {
     const key = el.dataset.vf;
     row.inputs[key] = el;
     if (el.type === "checkbox") el.checked = v[key];
+    else if (el.type === "number") el.value = v[key] || "";
     else el.value = v[key];
     el.addEventListener("input", () => {
-      v[key] = el.type === "checkbox" ? el.checked : el.value;
-      if (key === "from") syncVarRow(v, row);
+      v[key] = el.type === "checkbox" ? el.checked : el.type === "number" ? Math.max(0, Number(el.value) || 0) : el.value;
+      syncVarRow(v, row);
       changed("vars");
     });
   }
+  row.more = $("[data-ref=var-more]", root);
+  row.moreSummary = $("[data-ref=more-summary]", root);
+  row.mapRows = $("[data-ref=map-rows]", root);
+  row.mapElse = $("[data-ref=map-else]", root);
+  row.selectorLabel = $("[data-ref=selector-label]", root);
+  row.more.open = hasExtras(v);
+  $("[data-action=add-map]", root).addEventListener("click", () => {
+    v.map = [...(v.map || []), { from: "", to: "" }];
+    renderMapRows(v, row);
+    syncVarRow(v, row);
+    changed("vars");
+    $$("input", row.mapRows).at(-2)?.focus();
+  });
+  renderMapRows(v, row);
   row.pick = $("[data-action=pick]", root);
   row.pick.addEventListener("click", () => startPick(rule, v));
   row.pick.classList.toggle("active", picking?.varId === v.id);
@@ -477,11 +496,59 @@ function varRow(rule, v) {
   return root;
 }
 
+const KEYED = {
+  element: { label: "CSS selector", placeholder: "h1 or #item-id" },
+  meta: { label: "Metadata key", placeholder: "og:title, canonical or jsonld:sku" },
+  label: { label: "Label", placeholder: "Status" },
+};
+
 function syncVarRow(v, row) {
-  const isElement = v.from === "element";
-  row.selectorField.hidden = !isElement;
-  row.grid.classList.toggle("single", !isElement);
-  row.inputs.regex.placeholder = REGEX_PLACEHOLDERS[v.from];
+  const keyed = KEYED[v.from];
+  row.selectorField.hidden = !keyed;
+  row.grid.classList.toggle("single", !keyed);
+  if (keyed) {
+    row.selectorLabel.textContent = keyed.label;
+    row.inputs.selector.placeholder = keyed.placeholder;
+  }
+  row.pick.hidden = v.from !== "element";
+  row.inputs.regex.placeholder = REGEX_PLACEHOLDERS[v.from] ?? "(.+)";
+  row.mapElse.hidden = !v.map?.length;
+  row.moreSummary.textContent = extrasSummary(v);
+}
+
+const hasExtras = (v) => v.pick !== "all" || v.nozeros || v.max > 0 || v.map?.length > 0;
+
+function extrasSummary(v) {
+  const parts = [];
+  if (v.pick !== "all") parts.push({ first: "first word", last: "last word", initials: "initials" }[v.pick]);
+  if (v.nozeros) parts.push("no leading zeros");
+  if (v.max > 0) parts.push(`up to ${v.max} characters`);
+  if (v.map?.length) parts.push(`${v.map.length} replacement${v.map.length === 1 ? "" : "s"}`);
+  return parts.length ? `· ${parts.join(", ")}` : "";
+}
+
+// The "Replace values" table: one row per value → replacement.
+function renderMapRows(v, row) {
+  row.mapRows.replaceChildren(...(v.map || []).map((entry, i) => {
+    const r = document.createElement("div");
+    r.className = "map-row";
+    r.innerHTML = `<input class="mono" placeholder="In Progress" aria-label="Value on the page" spellcheck="false">
+      <span class="map-arrow" aria-hidden="true">→</span>
+      <input placeholder="WIP" aria-label="Show it as" spellcheck="false">
+      <button class="btn icon" type="button" title="Remove" aria-label="Remove replacement"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>`;
+    const [from, to] = $$("input", r);
+    from.value = entry.from;
+    to.value = entry.to;
+    from.addEventListener("input", () => { entry.from = from.value; changed("vars"); });
+    to.addEventListener("input", () => { entry.to = to.value; changed("vars"); });
+    $("button", r).addEventListener("click", () => {
+      v.map.splice(i, 1);
+      renderMapRows(v, row);
+      syncVarRow(v, row);
+      changed("vars");
+    });
+    return r;
+  }));
 }
 
 function addVar() {
@@ -587,7 +654,30 @@ function renderChips() {
   refs.chips.replaceChildren(
     ...names.map((n) => chip(n, "Insert this value", false)),
     ...TR.BUILT_INS.map((n) => chip(n, BUILT_IN_HELP[n], true)),
+    optionalChip(),
   );
+}
+
+// Wraps the selected text (or an empty spot) in {? ... }: a part that only
+// shows when every value inside it was found.
+function optionalChip() {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "chip optional";
+  b.textContent = "{? optional part}";
+  b.title = "A part that only shows when every value in it is found, like {? [{status}]}";
+  b.addEventListener("mousedown", (e) => e.preventDefault());
+  b.addEventListener("click", () => {
+    const input = refs.title;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    const inner = input.value.slice(start, end);
+    input.setRangeText(`{?${inner || " "}}`, start, end, "end");
+    if (!inner) input.setSelectionRange(start + 3, start + 3);
+    input.focus();
+    input.dispatchEvent(new Event("input"));
+  });
+  return b;
 }
 
 function chip(name, help, builtIn) {
@@ -1172,8 +1262,7 @@ async function guessFor(tabId, page) {
   const valueOf = (src) => src.from === "builtin"
     ? (src.name === "title" ? page.title.replace(/\s+/g, " ").trim() : new URL(page.url).hostname)
     : res.values[sources.indexOf(src)];
-  const values = variant.map((p) => (p.lit !== undefined ? p.lit : valueOf(p.source)));
-  if (variant.some((p, i) => p.source && !values[i])) return null; // a required value is missing here
+  if (variant.some((p) => p.source && p.opt === undefined && !valueOf(p.source))) return null; // a value it needs is missing here
 
   let look = null;
   if (lookFit?.mode === "always") look = lookFit.look;
@@ -1181,7 +1270,7 @@ async function guessFor(tabId, page) {
     const key = (keySource && valueOf(keySource) || "").toLowerCase();
     look = lookFit.cases.find((c) => c.value.toLowerCase() === key)?.look ?? TR.newLook();
   }
-  return { title: values.join(""), look };
+  return { title: Infer.renderVariant(variant, valueOf), look };
 }
 
 // Shows whether the box holds a guess, with the Looks right button.
@@ -1290,10 +1379,9 @@ async function findAsks() {
       : res.values[index.get(Infer.sourceKey(src))];
     const titles = [];
     for (const v of variants) {
-      const values = v.map((p) => (p.lit !== undefined ? p.lit : valueOf(p.source)));
-      // Every value is required, so a variant missing one wouldn't touch this tab.
-      if (v.some((p, i) => p.source && !values[i])) continue;
-      const title = values.join("");
+      // A variant missing a value it needs wouldn't touch this tab.
+      if (v.some((p) => p.source && p.opt === undefined && !valueOf(p.source))) continue;
+      const title = Infer.renderVariant(v, valueOf);
       if (!titles.includes(title)) titles.push(title);
     }
     if (titles.length > 1) asks.push({ tab, titles: titles.slice(0, 4) });
@@ -1376,14 +1464,19 @@ function renderTeach(examples) {
   const ex = teach.current?.want.trim() ? teach.current : examples.at(-1);
   let color = 0;
   $("#teach-breakdown").replaceChildren(...fit.parts.map((p) => {
-    if (p.lit !== undefined) return Object.assign(document.createElement("span"), { className: "lit", textContent: p.lit });
+    if (p.lit !== undefined) {
+      return Object.assign(document.createElement("span"), { className: p.opt !== undefined ? "lit optional" : "lit", textContent: p.lit });
+    }
     const seg = document.createElement("span");
-    seg.className = "seg";
+    seg.className = p.opt !== undefined ? "seg optional" : "seg";
     seg.style.setProperty("--seg", SEG_COLORS[color++ % SEG_COLORS.length]);
     seg.title = p.source.regex ? `Pattern: ${p.source.regex}` : "";
     const name = Object.assign(document.createElement("span"), { className: "seg-name", textContent: `{${p.name}}` });
     const value = Object.assign(document.createElement("span"), { className: "seg-text", textContent: Infer.run(p.source, ex) || "…" });
-    const from = Object.assign(document.createElement("span"), { className: "seg-src", textContent: describeSource(p.source) });
+    const from = Object.assign(document.createElement("span"), {
+      className: "seg-src",
+      textContent: describeSource(p.source) + (p.opt !== undefined ? " · only when found" : ""),
+    });
     seg.append(value, name, from);
     return seg;
   }));
@@ -1426,10 +1519,12 @@ function renderTeach(examples) {
     return li;
   }));
 
+  renderSplit(fit);
   const failed = fit.results.filter((r) => !r.ok).length;
   const anyFromPage = fit.parts.some((p) => p.lit === undefined);
   $("#teach-note").textContent =
-    !anyFromPage ? `None of this text is on the page, so every tab on ${fit.host} would get exactly this title.`
+    fit.count === 0 && fit.split ? "These titles need separate rules, one for each kind of page. You can create them below."
+    : !anyFromPage ? `None of this text is on the page, so every tab on ${fit.host} would get exactly this title.`
     : failed ? "One rule can't produce all of these. Switch to a tab marked ✕ to change its title, or remove it."
     : examples.length === 1 ? "Works for this tab. Switch to another tab on the site and type its title too, to check it works there."
     : examples.length === 2 ? "Works for both examples."
@@ -1439,12 +1534,83 @@ function renderTeach(examples) {
 
 const CHANGE_NAMES = { lower: "lowercase", upper: "UPPERCASE", capitalize: "Sentence case", title: "Title Case" };
 
+// When the examples need different rules (pull requests and issues, say),
+// offer to make one per kind of page, each limited to its URLs.
+function renderSplit(fit) {
+  const box = $("#teach-split");
+  const groups = fit.count === 0 ? fit.split : null;
+  box.hidden = !groups;
+  if (!groups) return;
+  $("#teach-split-list").replaceChildren(...groups.map((g) => {
+    const li = document.createElement("li");
+    const head = Object.assign(document.createElement("strong"), {
+      textContent: g.filter ? `Pages with ${g.filter.replace(/\\/g, "")} in the URL` : `Other pages (${g.label})`,
+    });
+    const what = Object.assign(document.createElement("span"), {
+      textContent: ` · ${g.examples.length} example${g.examples.length === 1 ? "" : "s"} · ${g.fit.title}`,
+    });
+    li.append(head, what);
+    return li;
+  }));
+  $("#teach-split-go").textContent = `Create ${groups.length} rules`;
+}
+
+async function saveSplit() {
+  const groups = teach?.fit?.split;
+  if (!groups) return;
+  await requestAccess(teach.fit.host);
+  const examples = teachExamples();
+  const made = [];
+  for (const g of groups) {
+    const vars = g.fit.vars.map((v) => ({ ...TR.newVar(), ...v }));
+    const icon = iconSettings(Infer.fitLook(g.examples, g.fit), vars);
+    const label = g.filter ? g.filter.replace(/[\\/]/g, "") : "other pages";
+    const rule = { ...TR.newRule(), name: `${g.fit.host.replace(/^\*\.|^www\./g, "")} – ${label}`, host: g.fit.host,
+      urlFilter: g.filter, title: g.fit.title, vars, ...icon };
+    rules.push(rule);
+    made.push(rule);
+    const own = examples.filter((e) => g.examples.some((x) => x.url === e.url));
+    await chrome.storage.local.set({ [`examples:${rule.id}`]: own.map(({ url, title, elements, styled, meta, labels, want, look, hint }) => ({ url, title, elements, styled, meta, labels, want, look, hint })) });
+  }
+  // Rules with a URL filter go first, so a catch-all one doesn't take their pages.
+  rules = [...rules.filter((r) => !made.includes(r)), ...made.sort((a, b) => (b.urlFilter ? 1 : 0) - (a.urlFilter ? 1 : 0))];
+  save();
+  renderList();
+  teach = null;
+  select(made[0].id);
+  toast(`Created ${made.length} rules, one for each kind of page.`);
+}
+
 function describeSource(src) {
   if (src.from === "builtin") return src.name === "title" ? "from the whole page title" : "from the site name";
-  const where = src.from === "url" ? "from the URL"
-    : src.from === "title" ? "from the page title"
-    : src.selector.length > 32 ? `from ${src.selector.slice(0, 31)}…` : `from ${src.selector}`;
-  const changes = [src.spaces && "- as spaces", CHANGE_NAMES[src.transform]].filter(Boolean);
+  const short = (s) => (s.length > 32 ? `${s.slice(0, 31)}…` : s);
+  const ordinal = (n) => (n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : `${n}th`);
+  const [kind, ...rest] = (src.how || "").split(":");
+  let where;
+  if (src.from === "url") {
+    if (kind === "segment") {
+      const n = Number(rest[0]);
+      where = n === -1 ? "from the URL’s last folder" : n < 0 ? `from the URL, ${ordinal(-n)} folder from the end` : `from the URL’s ${ordinal(n)} folder`;
+    } else if (kind === "query") where = `from the URL’s ?${rest.join(":")}=`;
+    else if (kind === "host") where = "from the site’s subdomain";
+    else where = "from the URL";
+  } else if (src.from === "title") where = "from the page title";
+  else if (src.from === "meta") where = `from page metadata (${short(src.selector)})`;
+  else if (src.from === "label") where = `next to “${short(src.selector)}”`;
+  else if (src.from === "page") where = "from the page text";
+  else where = `from ${short(src.selector)}`;
+  if (kind === "split") {
+    const n = Number(rest.at(-1));
+    const sep = rest.slice(0, -1).join(":").trim() || rest.slice(0, -1).join(":");
+    where += n < 0 ? (n === -1 ? `, last part split on “${sep}”` : `, ${ordinal(-n)} part from the end split on “${sep}”`) : `, ${ordinal(n + 1)} part split on “${sep}”`;
+  }
+  const changes = [
+    src.spaces && "- as spaces",
+    src.pick && src.pick !== "all" && { first: "first word", last: "last word", initials: "initials" }[src.pick],
+    src.nozeros && "no leading zeros",
+    CHANGE_NAMES[src.transform],
+    src.map?.length && `looked up (${src.map.slice(0, 2).map((m) => `${m.from} → ${m.to}`).join(", ")}${src.map.length > 2 ? ", …" : ""})`,
+  ].filter(Boolean);
   return changes.length ? `${where}, ${changes.join(", ")}` : where;
 }
 
@@ -1469,7 +1635,7 @@ async function saveTeach() {
     rule = addRule({ name: fit.host.replace(/^\*\.|^www\./g, ""), host: fit.host, title: fit.title, vars, ...icon });
   }
   // Keep the examples, so teaching this rule again starts from them.
-  const examples = teachExamples().map(({ url, title, elements, styled, want, look, hint }) => ({ url, title, elements, styled, want, look, hint }));
+  const examples = teachExamples().map(({ url, title, elements, styled, meta, labels, want, look, hint }) => ({ url, title, elements, styled, meta, labels, want, look, hint }));
   await chrome.storage.local.set({ [`examples:${rule.id}`]: examples });
   teach = null;
   select(rule.id);
@@ -1614,6 +1780,7 @@ function wireTeach() {
   });
   $("#teach-back").addEventListener("click", closeTeach);
   $("#teach-save").addEventListener("click", saveTeach);
+  $("#teach-split-go").addEventListener("click", saveSplit);
   $("#teach-confirm").addEventListener("click", () => {
     confirmGuess();
     refit();

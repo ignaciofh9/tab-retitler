@@ -7,7 +7,7 @@ A Chrome extension that renames tabs and badges their icons using rules based on
 ## What it does
 
 - **Renames tabs** from parts of the address, the page title, or text on the page: `4521 · Garden tools` instead of `Shop – Product page`.
-- **Learns rules from examples.** Type the title you want for a tab and it works out where each part comes from. Give it examples from more tabs and it keeps every rule that fits them all, narrowing down as you go and asking on your other open tabs when it's unsure. It also learns case changes and slugs, so `/posts/fix-login-redirect` can become `Fix login redirect`.
+- **Learns rules from examples.** Type the title you want for a tab and it works out where each part comes from. Give it examples from more tabs and it keeps every rule that fits them all, narrowing down as you go and asking on your other open tabs when it's unsure. It generalizes across examples (`/browse/ABC-12` and `/issues/WEB-7` share one rule), and knows URL folders, query parameters, title parts split on separators, page metadata (Open Graph, schema.org), and the text next to a label like "Status". It learns case changes, slugs (`fix-login-redirect` → `Fix login redirect`), dropped leading zeros, optional parts (`{num}{? [{status}]}`), lookups ("In Progress" → `WIP`), and when examples need separate rules for different kinds of page.
 - **Changes icons:** a dot or short text badge (round, square or a corner flag, in any corner and size), an outline, or a tint, gray or fade. Icons can follow the page, like green when a task's status label says "Done", and it suggests colors from the page's own labels.
 - **Edits next to the page.** The real tab is the preview: rules apply as you type, and the panel shows how a rule does on the tab you're looking at.
 - **Shares rules** as a short code (`TR2:…`) or readable JSON, with a preview before importing.
@@ -35,6 +35,13 @@ Makes `dist/tab-retitler-<version>.zip` for the Chrome Web Store: the `tab-retit
 
 To change the icons, edit the SVGs in `store-assets/src/` and run `store-assets/render-icons.sh` (macOS, needs Chrome).
 
+## Tests
+
+```sh
+node tests/infer.test.mjs   # rule learning, checked on pages it never saw
+node tests/share.test.mjs   # share codes and JSON round trips, old codes, bad input
+```
+
 ## How it's put together
 
 Plain JavaScript with no dependencies or build step. In `tab-retitler/`:
@@ -45,7 +52,7 @@ Plain JavaScript with no dependencies or build step. In `tab-retitler/`:
 | `background.js` | Registers the content script on allowed sites, and draws badged icons. |
 | `content.js` | Runs in tabs: applies rules, and answers the panel (what a rule finds here, page text and colored labels for teaching). |
 | `shared.js` | The rule engine: matching, value extraction, title templates, icon drawing, CSS selector generation. Used everywhere. |
-| `infer.js` | Builds rules from examples: splits the wanted title into fixed text and values, finds where each value comes from, and keeps every rule that fits all examples. Also infers icons. |
+| `infer.js` | Builds rules from examples: splits the wanted title into fixed text and values, generates ways to read each value lined up across all examples, and keeps every rule that fits them (a version space). Also learns optional parts, lookups, separate rules per kind of page, and icons. |
 | `share.js` | Share codes and JSON. Codes are a compact binary layout, deflated, with a checksum. |
 | `options.html`, `options.js`, `options.css` | The editor, used both in the side panel and as a full page. |
 | `picker.js` | Point-and-click element picker, injected into the page. |

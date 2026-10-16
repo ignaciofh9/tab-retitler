@@ -10,10 +10,15 @@
 
 self.Share = (() => {
   const PREFIX = "TR2:";
-  const FORMAT = 1;
+  // 2 added metadata and label sources and the newer value changes (pick,
+  // leading zeros, length limit, lookups). Format 1 codes still import.
+  const FORMAT = 2;
   const MAX_PAYLOAD = 1 << 20; // refuse anything that inflates past 1 MB
 
-  const FROM = ["url", "title", "element", "page"];
+  const FROM = ["url", "title", "element", "page"]; // format 1's sources
+  const SOURCES = TR.SOURCES;
+  const PICKS = TR.PICKS;
+  const KEYED = new Set(["element", "meta", "label"]);
   const CASES = ["none", "lower", "upper", "capitalize", "title"];
   const STYLES = ["none", "dot", "text"];
   const SHAPES = ["round", "square", "corner"];
@@ -138,9 +143,15 @@ self.Share = (() => {
     w.uint(rule.vars.length);
     for (const v of rule.vars) {
       w.str(v.name);
-      w.uint(index(FROM, v.from) | (index(CASES, v.transform) << 2) | (v.spaces ? 32 : 0) | (v.required ? 64 : 0));
-      if (v.from === "element") w.str(v.selector);
+      w.uint(index(SOURCES, v.from));
+      w.uint(index(CASES, v.transform) | (v.spaces ? 8 : 0) | (v.required ? 16 : 0) | (v.nozeros ? 32 : 0)
+        | (index(PICKS, v.pick) << 6) | (v.mapElse === "empty" ? 256 : 0));
+      if (KEYED.has(v.from)) w.str(v.selector);
       w.str(v.regex);
+      w.uint(v.max || 0);
+      w.uint(v.map.length);
+      for (const m of v.map) { w.str(m.from); w.str(m.to); }
+      w.str(v.how || "");
     }
     writeLook(w, rule.badge);
     if (hasSwitch) {
@@ -154,24 +165,13 @@ self.Share = (() => {
     }
   }
 
-  function readRule(r) {
+  function readRule(r, format) {
     const flags = r.uint();
     if (flags > 15) throw new Error("bad rule");
     const rule = { enabled: !!(flags & 1), name: r.str(), host: r.str(), shareId: r.str(), title: r.str() };
     rule.urlFilter = flags & 2 ? r.str() : "";
     rule.vars = [];
-    for (let n = r.uint(); n > 0; n--) {
-      const name = r.str();
-      const bits = r.uint();
-      if (bits > 127) throw new Error("bad value");
-      const from = FROM[bits & 3];
-      const transform = CASES[(bits >> 2) & 7] ?? fail();
-      rule.vars.push({
-        name, from, transform, spaces: !!(bits & 32), required: !!(bits & 64),
-        selector: from === "element" ? r.str() : "",
-        regex: r.str(),
-      });
-    }
+    for (let n = r.uint(); n > 0; n--) rule.vars.push(format === 1 ? readVar1(r) : readVar2(r));
     rule.badge = readLook(r);
     rule.badgeSwitch = { enabled: !!(flags & 8), on: "", cases: [] };
     if (flags & 4) {
@@ -181,6 +181,39 @@ self.Share = (() => {
       }
     }
     return rule;
+  }
+
+  function readVar1(r) {
+    const name = r.str();
+    const bits = r.uint();
+    if (bits > 127) throw new Error("bad value");
+    const from = FROM[bits & 3];
+    const transform = CASES[(bits >> 2) & 7] ?? fail();
+    return {
+      name, from, transform, spaces: !!(bits & 32), required: !!(bits & 64),
+      selector: from === "element" ? r.str() : "",
+      regex: r.str(),
+    };
+  }
+
+  function readVar2(r) {
+    const name = r.str();
+    const from = r.choice(SOURCES);
+    const bits = r.uint();
+    if (bits > 511) throw new Error("bad value");
+    const v = {
+      name, from,
+      transform: CASES[bits & 7] ?? fail(),
+      spaces: !!(bits & 8), required: !!(bits & 16), nozeros: !!(bits & 32),
+      pick: PICKS[(bits >> 6) & 3], mapElse: bits & 256 ? "empty" : "keep",
+      selector: KEYED.has(from) ? r.str() : "",
+    };
+    v.regex = r.str();
+    v.max = r.uint();
+    v.map = [];
+    for (let n = r.uint(); n > 0; n--) v.map.push({ from: r.str(), to: r.str() });
+    v.how = r.str();
+    return v;
   }
 
   // ---------- Checksum ----------
@@ -267,12 +300,20 @@ self.Share = (() => {
       vars: (Array.isArray(r.vars) ? r.vars : []).slice(0, 50).map((v) => ({
         ...TR.newVar(),
         name: str(v?.name, 60),
-        from: pick(FROM, v?.from),
+        from: pick(SOURCES, v?.from),
         selector: str(v?.selector),
         regex: str(v?.regex),
         required: !!v?.required,
         spaces: !!v?.spaces,
         transform: pick(CASES, v?.transform),
+        pick: pick(PICKS, v?.pick),
+        nozeros: !!v?.nozeros,
+        max: Number.isFinite(v?.max) ? Math.min(500, Math.max(0, Math.floor(v.max))) : 0,
+        map: (Array.isArray(v?.map) ? v.map : []).slice(0, 100)
+          .filter((m) => m && typeof m === "object")
+          .map((m) => ({ from: str(m.from, 200), to: str(m.to, 200) })),
+        mapElse: v?.mapElse === "empty" ? "empty" : "keep",
+        how: str(v?.how, 80),
       })),
       badge: look(r.badge),
       badgeSwitch: {
@@ -339,9 +380,9 @@ self.Share = (() => {
       if (bytes[bytes.length - 2] !== a || bytes[bytes.length - 1] !== b) throw new Error("checksum");
       const r = new Reader(body);
       const format = r.uint();
-      if (format !== FORMAT) throw new Error("format");
+      if (format < 1 || format > FORMAT) throw new Error("format");
       const rules = [];
-      for (let n = r.uint(); n > 0; n--) rules.push(readRule(r));
+      for (let n = r.uint(); n > 0; n--) rules.push(readRule(r, format));
       if (r.i !== body.length) throw new Error("extra data");
       return rules.map(clean);
     } catch (e) {

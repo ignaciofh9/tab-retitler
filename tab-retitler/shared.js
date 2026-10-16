@@ -10,12 +10,28 @@ self.TR = (() => {
 
   const uid = () => Math.random().toString(36).slice(2, 10);
 
-  // A value read from the page. After it's found it can be changed:
+  // A value read from the page.
+  //   from      - url | title | element | page | meta | label
+  //   selector  - for element: a CSS selector; for meta: a metadata key like
+  //               "og:title", "canonical" or "jsonld:sku"; for label: the
+  //               label's text, like "Status" (the value is what's next to it)
+  //   regex     - optional; the first ( ) group is kept
+  //   how       - how the source was found, only for describing it
+  //               ("segment:2", "query:id", "split: · :-1", ...)
+  // After it's found, a value can be changed, in this order:
   //   spaces    - turn - _ + into spaces ("fix-login" becomes "fix login")
+  //   pick      - all | first (word) | last (word) | initials
+  //   nozeros   - drop leading zeros from numbers ("0042" becomes "42")
+  //   map       - replace whole values: [{ from: "In Progress", to: "WIP" }];
+  //               mapElse says what to do with others: keep | empty
   //   transform - none | lower | upper | capitalize (Sentence case) | title (Title Case)
+  //   max       - shorten to this many characters, adding "…" (0: no limit)
   const newVar = () => ({
     id: uid(), name: "", from: "url", selector: "", regex: "", required: false, spaces: false, transform: "none",
+    pick: "all", nozeros: false, map: [], mapElse: "keep", max: 0, how: "",
   });
+  const SOURCES = ["url", "title", "element", "page", "meta", "label"];
+  const PICKS = ["all", "first", "last", "initials"];
 
   // How a tab's icon gets changed: a badge plus optional outline and tint.
   // Stored under the name "badge" for compatibility with saved rules.
@@ -104,24 +120,75 @@ self.TR = (() => {
 
   const squash = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 
-  const render = (template, vars) =>
-    squash(String(template || "").replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? ""));
+  // Fills {name} with values. A part written {? ...} is optional: it only
+  // shows when every value inside it was found, so "{num}{? [{status}]}"
+  // gives "42 [Done]" or just "42".
+  const render = (template, vars) => squash(renderPart(String(template || ""), vars));
+
+  function renderPart(t, vars) {
+    let out = "";
+    for (let i = 0; i < t.length;) {
+      if (t.startsWith("{?", i)) {
+        let depth = 1;
+        let j = i + 2;
+        for (; j < t.length && depth; j++) {
+          if (t[j] === "{") depth++;
+          else if (t[j] === "}") depth--;
+        }
+        const inner = t.slice(i + 2, depth ? j : j - 1);
+        const names = [...inner.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
+        if (names.every((n) => vars[n])) out += renderPart(inner, vars);
+        i = j;
+        continue;
+      }
+      const m = /^\{(\w+)\}/.exec(t.slice(i, i + 64));
+      if (m) {
+        out += vars[m[1]] ?? "";
+        i += m[0].length;
+        continue;
+      }
+      out += t[i++];
+    }
+    return out;
+  }
+
+  // The names inside optional {? ...} parts, which a rule doesn't need to apply.
+  const optionalNames = (template) => {
+    const names = new Set();
+    for (const m of String(template || "").matchAll(/\{\?((?:[^{}]|\{\w+\})*)\}/g)) {
+      for (const n of m[1].matchAll(/\{(\w+)\}/g)) names.add(n[1]);
+    }
+    return names;
+  };
 
   // URLs are read decoded, so %20 and accented letters come through as text.
   const urlText = (url) => {
     try { return decodeURIComponent(url); } catch { return url; }
   };
 
-  function transformValue(text, { spaces = false, transform = "none" } = {}) {
+  function transformValue(text, v = {}) {
+    const { spaces = false, transform = "none", pick = "all", nozeros = false, map = [], mapElse = "keep", max = 0 } = v;
     let t = String(text ?? "");
     if (spaces) t = t.replace(/[-_+]+/g, " ");
     t = squash(t);
-    switch (transform) {
-      case "lower": return t.toLowerCase();
-      case "upper": return t.toUpperCase();
-      case "capitalize": return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
-      case "title": return t.toLowerCase().replace(/(^|\s)(\S)/g, (_, gap, ch) => gap + ch.toUpperCase());
+    if (!t) return "";
+    const words = t.split(" ");
+    if (pick === "first") t = words[0];
+    else if (pick === "last") t = words[words.length - 1];
+    else if (pick === "initials") t = words.map((w) => w[0]).join("");
+    if (nozeros) t = t.replace(/(^|[^\d.])0+(?=\d)/g, "$1");
+    if (map.length) {
+      const hit = map.find((m) => m.from.trim().toLowerCase() === t.toLowerCase());
+      if (hit) return squash(hit.to);
+      if (mapElse === "empty") return "";
     }
+    switch (transform) {
+      case "lower": t = t.toLowerCase(); break;
+      case "upper": t = t.toUpperCase(); break;
+      case "capitalize": t = t.charAt(0).toUpperCase() + t.slice(1).toLowerCase(); break;
+      case "title": t = t.toLowerCase().replace(/(^|\s)(\S)/g, (_, gap, ch) => gap + ch.toUpperCase()); break;
+    }
+    if (max > 0 && [...t].length > max) t = [...t].slice(0, max).join("").trimEnd() + "…";
     return t;
   }
 
@@ -131,6 +198,8 @@ self.TR = (() => {
       case "title": return ctx.title;
       case "element": return v.selector ? ctx.elementText(v.selector) : null;
       case "page": return ctx.pageText();
+      case "meta": return v.selector && ctx.meta ? ctx.meta(v.selector) : null;
+      case "label": return v.selector && ctx.labelValue ? ctx.labelValue(v.selector) : null;
     }
     return null;
   }
@@ -145,7 +214,7 @@ self.TR = (() => {
     return m ? transformValue(m[1] ?? m[0], v) : "";
   }
 
-  // ctx: { url, title, elementText(selector), pageText() }
+  // ctx: { url, title, elementText(selector), pageText(), meta(key), labelValue(label) }
   // Returns { matched: true, vars, title, badge } or { matched: false, reason }.
   function evaluate(rule, ctx) {
     const fail = (reason) => ({ matched: false, reason });
@@ -160,10 +229,11 @@ self.TR = (() => {
     }
 
     const vars = { title: ctx.title, url: ctx.url, host: url.hostname, path: url.pathname };
+    const optional = optionalNames(rule.title);
     for (const v of rule.vars) {
       if (!NAME_RE.test(v.name) || BUILT_INS.includes(v.name)) continue;
       vars[v.name] = extract(v, ctx);
-      if (v.required && !vars[v.name]) return fail(`{${v.name}} wasn't found, and the rule requires it.`);
+      if (v.required && !optional.has(v.name) && !vars[v.name]) return fail(`{${v.name}} wasn't found, and the rule requires it.`);
     }
 
     const title = (rule.title.trim() && render(rule.title, vars)) || ctx.title;
@@ -456,11 +526,170 @@ self.TR = (() => {
     return parts.join(" > ");
   }
 
+  // Several selectors that each find exactly this element, most robust
+  // first, so teaching can keep whichever also works on the other pages.
+  const optionsCache = new WeakMap();
+  function selectorOptions(target, max = 6) {
+    if (optionsCache.has(target)) return optionsCache.get(target);
+    const out = [];
+    const add = (sel) => sel && out.length < max && !out.includes(sel) && isUnique(sel, target) && out.push(sel);
+    add(bestSelector(target));
+    const own = candidates(target);
+    own.forEach(add);
+    let anc = target.parentElement;
+    for (let depth = 0; anc && anc !== document.documentElement && depth < 4 && out.length < max; depth++, anc = anc.parentElement) {
+      for (const a of candidates(anc).slice(0, 2)) for (const c of own.slice(0, 2)) add(`${a} ${c}`);
+    }
+    add(structuralPath(target));
+    optionsCache.set(target, out);
+    return out;
+  }
+
+  // ---------- Page metadata ----------
+  // Keys: "og:title" and other <meta> property/name keys, "canonical", and
+  // "jsonld:<path>" for schema.org data, like "jsonld:name" or "jsonld:offers.price".
+
+  const cssString = (s) => s.replace(/["\\]/g, "\\$&");
+
+  function readMeta(key) {
+    if (key === "canonical") return document.querySelector('link[rel="canonical"]')?.href ?? null;
+    if (key.startsWith("jsonld:")) return jsonLd()[key.slice(7)] ?? null;
+    const el = document.querySelector(`meta[property="${cssString(key)}"], meta[name="${cssString(key)}"]`);
+    return el?.getAttribute("content") ?? null;
+  }
+
+  // Every JSON-LD value as a flat path → text map (first value wins).
+  function jsonLd() {
+    const out = {};
+    const walk = (o, path, depth) => {
+      if (o == null || depth > 4) return;
+      if (Array.isArray(o)) return o.slice(0, 6).forEach((x) => walk(x, path, depth + 1));
+      if (typeof o === "object") {
+        for (const [k, v] of Object.entries(o)) {
+          if (k === "@graph") walk(v, path, depth + 1);
+          else if (!k.startsWith("@")) walk(v, path ? `${path}.${k}` : k, depth + 1);
+        }
+        return;
+      }
+      const text = squash(String(o));
+      if (text && text.length <= 200 && !(path in out)) out[path] = text;
+    };
+    for (const el of document.querySelectorAll('script[type="application/ld+json"]')) {
+      try { walk(JSON.parse(el.textContent), "", 0); } catch {}
+    }
+    return out;
+  }
+
+  function listMeta(max = 40) {
+    const out = {};
+    for (const el of document.querySelectorAll("meta[property], meta[name]")) {
+      const key = el.getAttribute("property") || el.getAttribute("name");
+      const value = squash(el.getAttribute("content"));
+      if (/^(og|twitter|article|product|book|music|video):|^(description|application-name|author|keywords)$/i.test(key) && value && value.length <= 300) {
+        out[key] ??= value;
+      }
+    }
+    const canonical = readMeta("canonical");
+    if (canonical) out.canonical = canonical;
+    for (const [path, value] of Object.entries(jsonLd())) out[`jsonld:${path}`] = value;
+    return Object.fromEntries(Object.entries(out).slice(0, max));
+  }
+
+  // ---------- Text next to a label ----------
+  // "Status" → "In Review" for <dt>/<dd>, table header cells, <label>s,
+  // a label followed by its value, or "Status: In Review" in one piece.
+
+  const LABEL_MAX = 32;
+  const ownText = (el) => squash([...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join(" "));
+  const labelKey = (t) => squash(t).replace(/\s*[:：]\s*$/, "");
+  // Elements that are never labels: code, headings, and the value side of pairs.
+  const NOT_LABELS = new Set(["script", "style", "noscript", "template", "svg", "h1", "h2", "h3", "h4", "h5", "h6",
+    "dd", "td", "option", "button", "a", "input", "select", "textarea"]);
+  const INLINE_LABEL = /^([^:：]{1,32})[:：]\s*(.{1,200})$/;
+
+  // The label this element is, or null. Labels are <dt>, <th>, <label>, text
+  // ending in ":", or the first of a pair of elements ("<span>Owner</span>
+  // <span>Sam</span>").
+  function labelOf(el) {
+    if (NOT_LABELS.has(el.localName) || el.children.length > 2) return null;
+    const own = ownText(el);
+    if (!own || own.length > 60) return null;
+    const key = labelKey(own);
+    if (!key || key.length > LABEL_MAX || key.split(" ").length > 4 || !/[a-z]/i.test(key)) return null;
+    const explicit = ["dt", "th", "label"].includes(el.localName) || /[:：]\s*$/.test(own);
+    const parent = el.parentElement;
+    const pairStart = parent && parent.children.length === 2 && parent.firstElementChild === el;
+    return explicit || pairStart ? { key, explicit } : null;
+  }
+
+  // The visible text of an element, with spaces between its parts.
+  const textOf = (el) => squash([...el.querySelectorAll("*")].length ? el.innerText ?? el.textContent : el.textContent);
+
+  function valueNextTo(el, explicit) {
+    const own = labelKey(ownText(el)).toLowerCase();
+    const tries = [];
+    if (el.localName === "dt") tries.push(el.nextElementSibling);
+    if (el.localName === "th" && el.parentElement) {
+      const cells = [...el.parentElement.children];
+      tries.push(cells[cells.indexOf(el) + 1]);
+    }
+    if (el.localName === "label" && el.htmlFor) tries.push(document.getElementById(el.htmlFor));
+    tries.push(el.nextElementSibling);
+    if (explicit) tries.push(el.parentElement?.nextElementSibling);
+    for (const t of tries) {
+      if (!t || NOT_LABELS.has(t.localName) && !["dd", "td", "input", "select", "textarea", "a"].includes(t.localName)) continue;
+      const v = squash(t.value ?? textOf(t));
+      if (v && v.length <= 200 && labelKey(v).toLowerCase() !== own) return v;
+    }
+    return null;
+  }
+
+  // "Status: In Review" in one element, as a label and value.
+  function inlinePair(el) {
+    if (NOT_LABELS.has(el.localName) || el.children.length > 2) return null;
+    const m = INLINE_LABEL.exec(ownText(el));
+    return m && m[1].split(" ").length <= 4 && /[a-z]/i.test(m[1]) ? { key: labelKey(m[1]), value: squash(m[2]) } : null;
+  }
+
+  function labelValue(label) {
+    const want = labelKey(label).toLowerCase();
+    for (const el of document.body?.querySelectorAll("*") ?? []) {
+      const inline = inlinePair(el);
+      if (inline?.key.toLowerCase() === want) return inline.value;
+      const l = labelOf(el);
+      if (l?.key.toLowerCase() === want) {
+        const v = valueNextTo(el, l.explicit);
+        if (v) return v;
+      }
+    }
+    return null;
+  }
+
+  // Every label → value pair on the page, for teaching.
+  function listLabels(max = 60) {
+    const out = [];
+    const seen = new Set();
+    for (const el of document.body?.querySelectorAll("*") ?? []) {
+      if (out.length >= max) break;
+      let pair = inlinePair(el);
+      if (!pair) {
+        const l = labelOf(el);
+        const value = l && valueNextTo(el, l.explicit);
+        pair = value ? { key: l.key, value } : null;
+      }
+      if (!pair || seen.has(pair.key.toLowerCase())) continue;
+      seen.add(pair.key.toLowerCase());
+      out.push({ label: pair.key, value: pair.value });
+    }
+    return out;
+  }
+
   return {
-    BUILT_INS, COLORS, NAME_RE,
+    BUILT_INS, COLORS, NAME_RE, SOURCES, PICKS,
     CASE_OPS,
     uid, newLook, newVar, newCase, newRule, normalizeRule,
     normalizeHost, hostMatches, originFor, siteUrl,
-    regexError, render, extract, transformValue, urlText, evaluate, resolveBadge, firstMatch, decorate, bestSelector, elementKind,
+    regexError, render, optionalNames, extract, transformValue, urlText, evaluate, resolveBadge, firstMatch, decorate, bestSelector, selectorOptions, elementKind,
+    readMeta, listMeta, labelValue, listLabels,
   };
 })();

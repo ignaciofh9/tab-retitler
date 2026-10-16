@@ -113,6 +113,12 @@
         <h3 class="teach-sub">Examples</h3>
         <ol class="teach-examples" id="teach-examples"></ol>
         <p class="hint" id="teach-note"></p>
+        <div class="teach-split" id="teach-split" hidden>
+          <h3 class="teach-sub">These need separate rules</h3>
+          <p class="hint">One rule can't produce all of these titles, but each kind of page fits a rule of its own.</p>
+          <ul class="teach-split-list" id="teach-split-list"></ul>
+          <button class="btn primary sm" type="button" id="teach-split-go">Create rules</button>
+        </div>
         <div class="teach-actions">
           <button class="btn primary" type="button" id="teach-save">Create rule</button>
         </div>
@@ -398,6 +404,8 @@
           <option value="title">Page title</option>
           <option value="element">An element on the page</option>
           <option value="page">Anywhere on the page</option>
+          <option value="meta">Page metadata</option>
+          <option value="label">Next to a label</option>
         </select>
         <button class="btn icon" type="button" data-action="remove-var" title="Remove value" aria-label="Remove value">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
@@ -405,7 +413,7 @@
       </div>
       <div class="var-grid">
         <div class="field" data-ref="selector-field">
-          <label>CSS selector</label>
+          <label data-ref="selector-label">CSS selector</label>
           <div class="input-row">
             <input class="mono" data-vf="selector" placeholder="h1 or #item-id" spellcheck="false" autocomplete="off">
             <button class="btn pick" type="button" data-action="pick" title="Point at the element on the page instead of typing a selector">
@@ -430,6 +438,46 @@
         </select>
         <label class="check"><input type="checkbox" data-vf="spaces"> Turn - and _ into spaces</label>
       </div>
+      <details class="var-more" data-ref="var-more">
+        <summary>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          More changes <span class="var-more-summary" data-ref="more-summary"></span>
+        </summary>
+        <div class="var-more-body">
+          <div class="var-change">
+            <span class="var-change-label">Keep</span>
+            <select data-vf="pick" aria-label="Which part to keep">
+              <option value="all">all of it</option>
+              <option value="first">the first word</option>
+              <option value="last">the last word</option>
+              <option value="initials">the initials</option>
+            </select>
+            <label class="check"><input type="checkbox" data-vf="nozeros"> Drop leading zeros</label>
+          </div>
+          <div class="var-change">
+            <span class="var-change-label">Shorten to</span>
+            <input type="number" class="num-input" min="0" max="500" data-vf="max" placeholder="any" aria-label="Most characters">
+            <span class="hint">characters</span>
+          </div>
+          <div class="lookup">
+            <div class="lookup-head">
+              <span class="var-change-label">Replace values</span>
+              <button class="btn ghost sm" type="button" data-action="add-map">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                Add
+              </button>
+            </div>
+            <div class="lookup-rows" data-ref="map-rows"></div>
+            <div class="var-change" data-ref="map-else">
+              <span class="var-change-label">Anything else</span>
+              <select data-vf="mapElse" aria-label="Values not in the list">
+                <option value="keep">shows as it is</option>
+                <option value="empty">is left out</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </details>
       <div class="var-foot">
         <label class="check"><input type="checkbox" data-vf="required"> Only apply the rule when this is found</label>
         <span class="var-result" data-ref="var-result"></span>

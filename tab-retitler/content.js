@@ -22,6 +22,8 @@
       catch { return null; } // invalid selector
     },
     pageText: () => document.body?.innerText ?? "",
+    meta: (key) => TR.readMeta(key),
+    labelValue: (label) => TR.labelValue(label),
   };
 
   async function apply() {
@@ -108,10 +110,20 @@
       const lower = text.toLowerCase();
       if (!words.some((w) => lower.includes(w)) || !el.getClientRects().length) continue;
       seen.add(text);
-      elements.push({ text, selector: TR.bestSelector(el) });
+      // The first few get several selectors, so teaching can keep one that
+      // also works on the other pages; the rest get just the best one.
+      const selectors = elements.length < 30 ? TR.selectorOptions(el) : [TR.bestSelector(el)];
+      elements.push({ text, selector: selectors[0], selectors });
       if (elements.length >= 80) break;
     }
-    return { url: location.href, title: original.title, elements, styled: styledLabels() };
+    return {
+      url: location.href,
+      title: original.title,
+      elements,
+      styled: styledLabels(),
+      meta: TR.listMeta(),
+      labels: TR.listLabels(),
+    };
   }
 
   // Short, colorful, label-like elements (status pills, tags, priority chips),
@@ -137,7 +149,8 @@
         const key = `${TR.elementKind(el)}|${color}`;
         const known = byKey.get(key);
         if (!known) {
-          const entry = { text, selector: TR.bestSelector(el), color, more: [] };
+          const selectors = TR.selectorOptions(el);
+          const entry = { text, selector: selectors[0], selectors, color, more: [] };
           byKey.set(key, entry);
           list.push(entry);
         } else if (known.text !== text && !known.more.includes(text)) {
