@@ -163,5 +163,39 @@ test("trailing space in the wanted title", [
   { ...page("https://x.example.com/units/micaiah", "Micaiah (Unit) · Docs", { elements: [el("Shaman", "a.entity-text")] }), want: "Micaiah - Shaman" },
 ]);
 
+// ---------- Which pages a rule is for ----------
+
+const scopes = (name, examples, wantPaths, notCovered = [], covered = []) => {
+  console.log(`• ${name}`);
+  const r = Infer.fit(examples);
+  check(JSON.stringify(r.paths) === JSON.stringify(wantPaths), `pages: ${wantPaths.join("  |  ")}`, `got ${JSON.stringify(r.paths)}`);
+  for (const u of notCovered) check(!TR.pathMatches(r.path, new URL(u).pathname), `doesn't cover ${u}`);
+  for (const u of covered) check(TR.pathMatches(r.path, new URL(u).pathname), `covers ${u}`);
+};
+
+scopes("one pull request", [
+  { ...page("https://code.example.com/acme/web/pull/42", "Fix login"), want: "#42 Fix login" },
+], ["/acme/web/pull/*", "/*/*/pull/*", "/*/*/pull/**", ""],
+["https://code.example.com/acme/web/issues/7", "https://code.example.com/acme/web/pulls"], ["https://code.example.com/acme/web/pull/43"]);
+
+scopes("pull requests in two repositories", [
+  { ...page("https://code.example.com/acme/web/pull/42", "Fix login"), want: "#42 Fix login" },
+  { ...page("https://code.example.com/globex/api/pull/7", "Add tests"), want: "#7 Add tests" },
+], ["/*/*/pull/*", "/*/*/pull/**", ""], ["https://code.example.com/acme/web/issues/7"], ["https://code.example.com/initech/app/pull/1"]);
+
+scopes("tracker tickets", [
+  { ...page("https://track.example.com/browse/ABC-12", "Fix login"), want: "12 Fix login" },
+], ["/browse/*", "/browse/**", ""], ["https://track.example.com/dashboard"], ["https://track.example.com/browse/WEB-7"]);
+
+scopes("docs at different depths", [
+  { ...page("https://docs.example.com/guide/setup", "Setup · Docs"), want: "Setup" },
+  { ...page("https://docs.example.com/guide/advanced/caching", "Caching · Docs"), want: "Caching" },
+], ["/guide/**", ""], ["https://docs.example.com/blog/news"], ["https://docs.example.com/guide/a/b/c"]);
+
+scopes("value read from a plain word in the path", [
+  { ...page("https://shop.example.com/category/lamps", "Shop"), want: "Lamps" },
+  { ...page("https://shop.example.com/category/chairs", "Shop"), want: "Chairs" },
+], ["/category/*", "/category/**", ""], [], ["https://shop.example.com/category/desks"]);
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

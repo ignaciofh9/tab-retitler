@@ -101,6 +101,10 @@
         <h3 class="teach-sub">Where each part comes from</h3>
         <div class="breakdown" id="teach-breakdown"></div>
         <p class="teach-undecided" id="teach-undecided"></p>
+        <div class="teach-scope" id="teach-scope" hidden>
+          <h3 class="teach-sub">Applies to</h3>
+          <div class="scope-list" id="teach-scope-list" role="radiogroup" aria-label="Which pages the rule is for"></div>
+        </div>
         <div class="teach-look" id="teach-look" hidden>
           <h3 class="teach-sub">Icon</h3>
           <div id="teach-look-body"></div>
@@ -229,6 +233,11 @@
               <div class="access" data-ref="access"></div>
             </div>
             <p class="hint" data-ref="host-hint">Start with *. to include every subdomain.</p>
+          </div>
+          <div class="field">
+            <label for="f-path">Pages <span class="opt">optional</span></label>
+            <input id="f-path" class="mono" data-ref="path" placeholder="/products/*" spellcheck="false" autocomplete="off">
+            <p class="hint" data-ref="path-hint"></p>
           </div>
           <div class="field">
             <label for="f-filter">Only URLs matching <span class="opt">optional</span></label>

@@ -11,8 +11,9 @@
 self.Share = (() => {
   const PREFIX = "TR2:";
   // 2 added metadata and label sources and the newer value changes (pick,
-  // leading zeros, length limit, lookups). Format 1 codes still import.
-  const FORMAT = 2;
+  // leading zeros, length limit, lookups); 3 added page scopes ("/products/*").
+  // Older codes still import.
+  const FORMAT = 3;
   const MAX_PAYLOAD = 1 << 20; // refuse anything that inflates past 1 MB
 
   const FROM = ["url", "title", "element", "page"]; // format 1's sources
@@ -134,12 +135,13 @@ self.Share = (() => {
   function writeRule(w, rule) {
     const sw = rule.badgeSwitch;
     const hasSwitch = sw.enabled || sw.cases.length > 0 || !!sw.on;
-    w.uint((rule.enabled ? 1 : 0) | (rule.urlFilter ? 2 : 0) | (hasSwitch ? 4 : 0) | (sw.enabled ? 8 : 0));
+    w.uint((rule.enabled ? 1 : 0) | (rule.urlFilter ? 2 : 0) | (hasSwitch ? 4 : 0) | (sw.enabled ? 8 : 0) | (rule.path ? 16 : 0));
     w.str(rule.name);
     w.str(rule.host);
     w.str(rule.shareId);
     w.str(rule.title);
     if (rule.urlFilter) w.str(rule.urlFilter);
+    if (rule.path) w.str(rule.path);
     w.uint(rule.vars.length);
     for (const v of rule.vars) {
       w.str(v.name);
@@ -167,9 +169,10 @@ self.Share = (() => {
 
   function readRule(r, format) {
     const flags = r.uint();
-    if (flags > 15) throw new Error("bad rule");
+    if (flags > (format >= 3 ? 31 : 15)) throw new Error("bad rule");
     const rule = { enabled: !!(flags & 1), name: r.str(), host: r.str(), shareId: r.str(), title: r.str() };
     rule.urlFilter = flags & 2 ? r.str() : "";
+    rule.path = flags & 16 ? r.str() : "";
     rule.vars = [];
     for (let n = r.uint(); n > 0; n--) rule.vars.push(format === 1 ? readVar1(r) : readVar2(r));
     rule.badge = readLook(r);
@@ -296,6 +299,7 @@ self.Share = (() => {
       enabled: r.enabled !== false,
       host: TR.normalizeHost(str(r.host)),
       urlFilter: str(r.urlFilter),
+      path: TR.normalizePath(str(r.path, 500)),
       title: str(r.title),
       vars: (Array.isArray(r.vars) ? r.vars : []).slice(0, 50).map((v) => ({
         ...TR.newVar(),
@@ -335,6 +339,7 @@ self.Share = (() => {
       Object.fromEntries(Object.entries(obj).filter(([k, v]) => k !== "id" && JSON.stringify(v) !== JSON.stringify(defaults[k])));
     const out = { name: rule.name, host: rule.host, shareId: rule.shareId };
     if (!rule.enabled) out.enabled = false;
+    if (rule.path) out.path = rule.path;
     if (rule.urlFilter) out.urlFilter = rule.urlFilter;
     if (rule.title) out.title = rule.title;
     if (rule.vars.length) out.vars = rule.vars.map((v) => dropDefaults(v, { ...TR.newVar(), name: undefined }));

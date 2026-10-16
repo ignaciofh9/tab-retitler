@@ -784,6 +784,63 @@ self.Infer = (() => {
     return best;
   }
 
+  // ---------- Which pages a rule is for ----------
+
+  const urlPath = (url) => { try { return new URL(url).pathname; } catch { return "/"; } };
+
+  // Path parts that look like ids or slugs, which change from page to page.
+  const looksVariable = (s) => /\d/.test(s) || s.length > 24 || s.split(/[-_]/).length >= 3 || /^[0-9a-f]{8,}$/i.test(s);
+
+  // Path parts (by position) that the title reads a value from.
+  function readParts(parts, ex) {
+    const segs = TR.pathSegments(urlPath(ex.url));
+    const read = new Set();
+    for (const p of parts ?? []) {
+      if (p.lit !== undefined || p.source?.from !== "url") continue;
+      const value = run(p.source, ex);
+      if (value) segs.forEach((seg, i) => { if (occurrences(seg, value).length) read.add(i); });
+    }
+    return read;
+  }
+
+  // Page patterns for a rule, narrowest first. The narrowest lines up the
+  // examples' paths: parts that are the same everywhere stay, parts that
+  // differ or that the title reads become "*". With one example, parts that
+  // look like ids or slugs become "*" too. Wider options keep only the last
+  // fixed part (the kind of page, like "pull"), then anything below it, then
+  // every page ("").
+  function pathScopes(examples, parts) {
+    const all = examples.map((ex) => TR.pathSegments(urlPath(ex.url)));
+    const reads = examples.map((ex) => readParts(parts, ex));
+    let specific;
+    if (all.every((segs) => segs.length === all[0].length)) {
+      specific = all[0].map((seg, i) => {
+        const same = all.every((segs) => segs[i].toLowerCase() === seg.toLowerCase());
+        const read = reads.some((r) => r.has(i));
+        return same && !read && !(examples.length === 1 && looksVariable(seg)) ? seg : "*";
+      });
+    } else {
+      specific = [];
+      for (let i = 0; all.every((segs) => segs[i] !== undefined && segs[i].toLowerCase() === all[0][i].toLowerCase())
+        && !looksVariable(all[0][i]) && !reads.some((r) => r.has(i)); i++) specific.push(all[0][i]);
+      specific.push("**");
+    }
+    const options = [];
+    const add = (segs) => {
+      const p = TR.normalizePath("/" + segs.join("/"));
+      if (!options.includes(p)) options.push(p);
+    };
+    add(specific);
+    const fixed = specific.map((seg, i) => (seg !== "*" && seg !== "**" ? i : -1)).filter((i) => i >= 0);
+    const last = fixed.at(-1);
+    if (last !== undefined) {
+      add(specific.map((seg, i) => (i < last ? "*" : seg)));
+      add([...specific.slice(0, last + 1).map((seg, i) => (i < last ? "*" : seg)), "**"]);
+    }
+    add([]);
+    return options;
+  }
+
   // ---------- Separate rules for different kinds of page ----------
 
   // If no single rule fits, look for a URL folder that tells the examples
@@ -958,8 +1015,10 @@ self.Infer = (() => {
   //   results - for each example, whether that rule gets it right
   //   count   - how many possible rules fit every example (0 if none do)
   //   space   - those possible rules, for variants()
+  //   path    - the narrowest page pattern covering every example, and
+  //   paths   - wider options, ending with "" (every page)
   //   split   - when nothing fits, groups that each fit a rule of their own:
-  //             [{ filter, label, examples, fit }]
+  //             [{ filter, label, examples, fit }], each fit with its own path
   function fit(examples, opts = {}) {
     // Titles always come out with spaces collapsed and trimmed, so compare
     // against the wanted title the same way. Otherwise a trailing space, or a
@@ -1004,7 +1063,8 @@ self.Infer = (() => {
     }
     const title = templateOf(best.parts, (p) => p.name);
     const split = !count && !opts.noSplit ? splitByUrl(examples) : null;
-    return { host: hostFor(examples), title, vars, parts: best.parts, results, count, space, split };
+    const paths = pathScopes(examples, best.parts);
+    return { host: hostFor(examples), path: paths[0], paths, title, vars, parts: best.parts, results, count, space, split };
   }
 
   // ---------- Icons ----------

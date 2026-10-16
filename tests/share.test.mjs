@@ -29,6 +29,7 @@ const look = () => TR.newLook({
 const randomRule = () => TR.normalizeRule({
   ...TR.newRule(), name: (text() || "Rule").slice(0, 200), enabled: rand() < 0.7,
   host: any(["example.com", "*.example.com", "localhost"]), urlFilter: any(["", "/items/"]), title: text(),
+  path: any(["", "/products/*", "/*/*/pull/*", "/guide/**", "/browse/ABC-*"]),
   vars: Array.from({ length: Math.floor(rand() * 4) }, () => ({
     ...TR.newVar(), name: any(["num", "name", "status"]), from: any(TR.SOURCES),
     selector: any(["h1", "og:title", "Status", "jsonld:offers.price"]), regex: text(),
@@ -63,6 +64,11 @@ for (let n = 0; n < 300; n++) {
   });
 }
 check(mismatches === 0, "300 random batches survive code and JSON round trips", `${mismatches} mismatches`);
+
+// A code made by version 0.6.0 (format 2), from before page scopes.
+const [v2Rule] = await Share.parse("TR2:Y2Jk5ArOyC9QyCxJzS0WKM7IL9BLrUjMLchJ1UvOz-VIyy0xKirNSeWpLs4urVWozkvMTa1lYi7OLmUx4Moqzs_LSbEqzi7ljYt21I2K1dbViEnR1mRgYGABKWRlYA8oyk8pTS5hYGAUcE8sSknNUyjJz88pVihOLWENAbEYGOb7AAA");
+check(v2Rule?.name === "Shop items" && v2Rule.path === "" && v2Rule.vars[0].from === "meta" && v2Rule.vars[0].nozeros
+  && v2Rule.vars[1].map[0]?.to === "Tools", "format 2 codes still import", JSON.stringify(v2Rule));
 
 // A code made by the previous version (format 1).
 const old = "TR2:Y2Rk5A0pSkzOTi1SKEkszi4WLoHw9FIrEnMLclL1kvNzObKNsywrjBKT-KvzSnNrFQ5tV6jOS8xNrWVizivNdeCL0QdrjdHXiEnR1mQBSTnxZBjqgUR1QTwGhvofAA";

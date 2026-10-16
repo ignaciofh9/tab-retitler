@@ -174,7 +174,7 @@ function refreshListItem(rule, li = $(`.rule-item[data-id="${rule.id}"]`)) {
   li.classList.toggle("selected", rule.id === selectedId);
   li.classList.toggle("disabled", !rule.enabled);
   $(".rule-title", li).textContent = rule.name || "Untitled rule";
-  $(".rule-host", li).textContent = rule.host || "No site yet";
+  $(".rule-host", li).textContent = rule.host ? rule.host + (rule.path || "") : "No site yet";
   $("input", li).checked = rule.enabled;
 
   paintIcon($("canvas", li), rule.host ? TR.siteUrl(rule.host) : "", TR.resolveBadge(rule.badge, {}));
@@ -297,6 +297,12 @@ function renderEditor() {
   refs.host.addEventListener("blur", () => {
     if (rule.host) refs.host.value = rule.host;
   });
+  refs.path.value = rule.path;
+  refs.path.addEventListener("input", () => {
+    rule.path = TR.normalizePath(refs.path.value);
+    changed("path");
+  });
+  refs.path.addEventListener("blur", () => (refs.path.value = rule.path));
 
   $("[data-action=delete]", editor).addEventListener("click", () => deleteRule());
   $("[data-action=share]", editor).addEventListener("click", () => openShare([rule.id]));
@@ -388,6 +394,15 @@ function validate() {
   setHint(refs["host-hint"], hostBad
     ? "That doesn't look like a site. Try example.com or *.example.com."
     : "Start with *. to include every subdomain.", hostBad);
+
+  // Pages: what the pattern means, and whether this tab is one of them.
+  let pathHint = "Which pages on the site. * is any one part of the path, ** is anything after. Empty is every page.";
+  if (IS_PANEL && rule.host && live?.host && TR.hostMatches(rule.host, live.host)) {
+    let here = "";
+    try { here = new URL(live.tab.url).pathname; } catch {}
+    if (rule.path) pathHint = TR.pathMatches(rule.path, here) ? `This tab (${here}) is one of these pages.` : `This tab (${here}) isn't one of these pages.`;
+  }
+  refs["path-hint"].textContent = pathHint;
 
   const filterErr = rule.urlFilter && TR.regexError(rule.urlFilter);
   $("[data-field=urlFilter]").classList.toggle("invalid", !!filterErr);
@@ -1009,7 +1024,11 @@ function renderThisTab() {
   const status = $("#this-tab-status");
   const actions = $("#this-tab-actions");
   actions.replaceChildren();
+  let here = "";
+  try { here = new URL(tab.url).pathname; } catch {}
   const ruleForHost = live?.host && rules.find((r) => r.host && TR.hostMatches(r.host, live.host));
+  // A rule for this site that also covers this page.
+  const ruleForPage = live?.host && rules.find((r) => r.host && TR.hostMatches(r.host, live.host) && TR.pathMatches(r.path, here));
   const applied = live?.info?.appliedRuleId && rules.find((r) => r.id === live.info.appliedRuleId);
 
   if (!live || live.state === "blocked") {
@@ -1030,16 +1049,20 @@ function renderThisTab() {
     status.textContent = "";
     status.append("Changed by ", strong(applied.name || "Untitled rule"));
     actions.append(button("Edit rule", () => select(applied.id), "primary"));
+  } else if (ruleForPage) {
+    status.textContent = "";
+    status.append("No rule applies to this page. ", strong(ruleForPage.name || "Untitled rule"), " covers it, but didn't find what it needs here.");
+    actions.append(button("Edit rule", () => select(ruleForPage.id)));
+    actions.append(newRuleButton());
   } else if (ruleForHost) {
     status.textContent = "";
-    status.append("No rule applies to this page. ", strong(ruleForHost.name || "Untitled rule"), " is for this site.");
+    status.append("This site's rules are for other pages: ", strong(ruleForHost.name || "Untitled rule"), ` is for ${ruleForHost.path || "every page"}.`);
     actions.append(button("Edit rule", () => select(ruleForHost.id)));
-    actions.append(newRuleButton());
   } else {
     status.textContent = live.state === "noaccess" ? "Tab Retitler isn't set up for this site yet." : "No rule applies to this page.";
     actions.append(newRuleButton());
   }
-  if (live?.host && live.state !== "blocked") actions.append(teachButton(applied || ruleForHost));
+  if (live?.host && live.state !== "blocked") actions.append(teachButton(applied || ruleForPage));
 }
 
 // Opens "Build from examples" for this tab: to teach an existing rule, or to
@@ -1167,7 +1190,7 @@ async function openTeach(ruleId) {
   const rule = ruleId && rules.find((r) => r.id === ruleId);
   // Access may have just been granted, so look at the tab again first.
   await refreshLive();
-  teach = { ruleId, saved, current: null, fit: null, history: [], asks: [] };
+  teach = { ruleId, saved, current: null, fit: null, history: [], asks: [], path: rule?.path ?? null, paths: [] };
   $("#teach-heading").textContent = rule ? `Teach “${rule.name || "Untitled rule"}”` : "Build from examples";
   $("#teach-save").textContent = rule ? "Update rule" : "Create rule";
   setView("teach");
@@ -1327,6 +1350,9 @@ function refit() {
   if (!teach) return;
   const examples = teachExamples();
   teach.fit = Infer.fit(examples);
+  // Keep a chosen scope while it's still an option; otherwise the narrowest.
+  teach.paths = teach.fit?.paths ?? [];
+  if (!teach.paths.includes(teach.path)) teach.path = teach.paths[0];
   teach.lookFit = teach.fit && Infer.fitLook(examples, teach.fit);
   // One entry per number of examples; typing just updates the latest.
   const count = teach.fit?.count ?? 0;
@@ -1366,8 +1392,10 @@ async function findAsks() {
   }
 
   const exampleUrls = new Set(teachExamples().map((e) => e.url));
+  // Only tabs the rule will cover: the pages chosen under "Applies to".
+  const inScope = (t) => { try { return TR.pathMatches(teach.path ?? fit.path, new URL(t.url).pathname); } catch { return false; } };
   const tabs = (await chrome.tabs.query({ url: TR.originFor(fit.host) }))
-    .filter((t) => !exampleUrls.has(t.url))
+    .filter((t) => !exampleUrls.has(t.url) && inScope(t))
     .slice(0, 12);
   const asks = [];
   for (const tab of tabs) {
@@ -1482,6 +1510,7 @@ function renderTeach(examples) {
   }));
 
   renderTeachLook();
+  renderScope();
 
   // Values whose source is still undecided.
   const undecided = fit.count > 0 ? fit.parts.filter((p) => p.lit === undefined && p.options.length > 1) : [];
@@ -1543,9 +1572,7 @@ function renderSplit(fit) {
   if (!groups) return;
   $("#teach-split-list").replaceChildren(...groups.map((g) => {
     const li = document.createElement("li");
-    const head = Object.assign(document.createElement("strong"), {
-      textContent: g.filter ? `Pages with ${g.filter.replace(/\\/g, "")} in the URL` : `Other pages (${g.label})`,
-    });
+    const head = Object.assign(document.createElement("strong"), { textContent: g.fit.path || "Every other page" });
     const what = Object.assign(document.createElement("span"), {
       textContent: ` · ${g.examples.length} example${g.examples.length === 1 ? "" : "s"} · ${g.fit.title}`,
     });
@@ -1566,14 +1593,13 @@ async function saveSplit() {
     const icon = iconSettings(Infer.fitLook(g.examples, g.fit), vars);
     const label = g.filter ? g.filter.replace(/[\\/]/g, "") : "other pages";
     const rule = { ...TR.newRule(), name: `${g.fit.host.replace(/^\*\.|^www\./g, "")} – ${label}`, host: g.fit.host,
-      urlFilter: g.filter, title: g.fit.title, vars, ...icon };
+      path: g.fit.path, title: g.fit.title, vars, ...icon };
     rules.push(rule);
     made.push(rule);
     const own = examples.filter((e) => g.examples.some((x) => x.url === e.url));
     await chrome.storage.local.set({ [`examples:${rule.id}`]: own.map(({ url, title, elements, styled, meta, labels, want, look, hint }) => ({ url, title, elements, styled, meta, labels, want, look, hint })) });
   }
-  // Rules with a URL filter go first, so a catch-all one doesn't take their pages.
-  rules = [...rules.filter((r) => !made.includes(r)), ...made.sort((a, b) => (b.urlFilter ? 1 : 0) - (a.urlFilter ? 1 : 0))];
+  made.forEach(placeBySpecificity);
   save();
   renderList();
   teach = null;
@@ -1627,19 +1653,81 @@ async function saveTeach() {
   const icon = iconSettings(teach.lookFit, vars);
   const existing = teach.ruleId && rules.find((r) => r.id === teach.ruleId);
   let rule = existing;
+  const path = teach.paths?.includes(teach.path) ? teach.path : fit.path;
   if (existing) {
-    Object.assign(existing, { host: fit.host, title: fit.title, vars, ...icon });
-    save();
-    renderList();
+    Object.assign(existing, { host: fit.host, path, title: fit.title, vars, ...icon });
   } else {
-    rule = addRule({ name: fit.host.replace(/^\*\.|^www\./g, ""), host: fit.host, title: fit.title, vars, ...icon });
+    const kind = TR.pathSegments(path).filter((s) => !s.includes("*")).at(-1);
+    rule = { ...TR.newRule(), name: fit.host.replace(/^\*\.|^www\./g, "") + (kind ? ` – ${kind}` : ""), host: fit.host, path, title: fit.title, vars, ...icon };
+    rules.push(rule);
   }
+  placeBySpecificity(rule);
+  save();
+  renderList();
   // Keep the examples, so teaching this rule again starts from them.
   const examples = teachExamples().map(({ url, title, elements, styled, meta, labels, want, look, hint }) => ({ url, title, elements, styled, meta, labels, want, look, hint }));
   await chrome.storage.local.set({ [`examples:${rule.id}`]: examples });
   teach = null;
   select(rule.id);
   toast(existing ? "Rule updated." : "Rule created. It's already working on this tab.");
+}
+
+// Puts a rule before broader rules for the same site, so on a page both
+// cover, the more specific one wins (the first matching rule is used).
+function placeBySpecificity(rule) {
+  rules = rules.filter((r) => r !== rule);
+  const mine = TR.pathSpecificity(rule.path);
+  const at = rules.findIndex((r) => r.host && rule.host && (TR.hostMatches(r.host, rule.host.replace(/^\*\./, "")) || TR.hostMatches(rule.host, r.host.replace(/^\*\./, "")))
+    && TR.pathSpecificity(r.path) < mine);
+  rules.splice(at < 0 ? rules.length : at, 0, rule);
+}
+
+// ---------- Which pages the rule is for ----------
+
+// The page patterns teaching came up with, narrowest first, each with how
+// many of your open tabs on the site it covers.
+let scopeRun = 0;
+async function renderScope() {
+  const box = $("#teach-scope");
+  const fit = teach?.fit;
+  box.hidden = !fit?.paths?.length || (fit.count === 0 && !!fit.split);
+  if (box.hidden) return;
+  const list = $("#teach-scope-list");
+  const describe = (p) => {
+    if (!p) return `Every page on ${fit.host}`;
+    return p.endsWith("/**") ? "These pages and any below them" : "Only pages with exactly this shape";
+  };
+  list.replaceChildren(...fit.paths.map((p) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "scope-option";
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", p === teach.path);
+    b.dataset.path = p;
+    b.innerHTML = '<span class="scope-dot" aria-hidden="true"></span><span class="scope-text"><code></code><span class="scope-desc"></span></span><span class="scope-count"></span>';
+    $("code", b).textContent = p || "/**";
+    $(".scope-desc", b).textContent = describe(p);
+    b.addEventListener("click", () => {
+      teach.path = p;
+      for (const o of $$(".scope-option", list)) o.setAttribute("aria-checked", o.dataset.path === p);
+      scheduleAsks(); // questions only cover pages in scope
+    });
+    return b;
+  }));
+  // Counting open tabs needs the tabs API (side panel only).
+  if (!chrome.tabs?.query) return;
+  const run = ++scopeRun;
+  const tabs = await chrome.tabs.query({ url: TR.originFor(fit.host) });
+  if (run !== scopeRun || !teach) return;
+  const seen = new Set(teachExamples().map((e) => e.url));
+  for (const o of $$(".scope-option", list)) {
+    const covered = tabs.filter((t) => { try { return TR.pathMatches(o.dataset.path, new URL(t.url).pathname); } catch { return false; } });
+    $(".scope-count", o).textContent = `${covered.length} open tab${covered.length === 1 ? "" : "s"}`;
+    // An open tab this option adds over the narrower ones makes the choice concrete.
+    const added = covered.find((t) => !seen.has(t.url));
+    if (added) $(".scope-desc", o).textContent += ` · adds ${new URL(added.url).pathname}`;
+    covered.forEach((t) => seen.add(t.url));
+  }
 }
 
 // ---------- Teaching icons ----------
@@ -2082,6 +2170,7 @@ function pickRow(rule, details = false) {
       Object.assign(document.createElement("dt"), { textContent: term }),
       Object.assign(document.createElement("dd"), { textContent: desc }),
     );
+    if (rule.path) add("Pages", rule.path);
     add("Title", rule.title || "Keeps the page's own title");
     if (rule.vars.length) add("Reads", rule.vars.map((v) => `{${v.name}} ${describeSource(v)}`).join(" · "));
     if (rule.urlFilter) add("Only URLs matching", rule.urlFilter);

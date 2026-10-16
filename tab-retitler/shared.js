@@ -62,6 +62,9 @@ self.TR = (() => {
     name: "New rule",
     enabled: true,
     host: "",
+    // Which pages on the site: "/products/*" ("*" is one part of the path,
+    // "**" anything after). Empty means every page.
+    path: "",
     urlFilter: "",
     vars: [],
     title: "",
@@ -104,6 +107,54 @@ self.TR = (() => {
     const base = pattern.slice(2);
     return hostname === base || hostname.endsWith("." + base);
   }
+
+  // ---------- Page scopes ----------
+
+  const pathSegments = (path) => {
+    let p = String(path || "");
+    try { p = decodeURIComponent(p); } catch {}
+    return p.split("/").filter(Boolean);
+  };
+
+  // Accepts "/products/*", "products/*", or a whole URL pasted in, and returns
+  // a tidy pattern ("" for every page).
+  function normalizePath(input) {
+    let p = String(input || "").trim();
+    if (!p || p === "/" || p === "/**" || p === "**") return "";
+    p = p.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, "").replace(/[?#].*$/, "");
+    const segs = p.split("/").filter(Boolean);
+    return segs.length ? "/" + segs.join("/") : "";
+  }
+
+  // Whether a page's path is one of a pattern's pages. Parts match exactly
+  // (ignoring case), "*" matches one part, "**" any number, and "*" inside a
+  // part matches any characters there ("ABC-*").
+  function pathMatches(pattern, pathname) {
+    const pat = pathSegments(pattern);
+    if (!pat.length) return true;
+    const segs = pathSegments(pathname);
+    const part = (p, s) => {
+      if (p === "*") return true;
+      if (!p.includes("*")) return p.toLowerCase() === s.toLowerCase();
+      return new RegExp("^" + p.split("*").map((x) => x.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$", "i").test(s);
+    };
+    const memo = new Map();
+    const match = (i, j) => {
+      const key = i * 1000 + j;
+      if (memo.has(key)) return memo.get(key);
+      let ok;
+      if (i === pat.length) ok = j === segs.length;
+      else if (pat[i] === "**") ok = match(i + 1, j) || (j < segs.length && match(i, j + 1));
+      else ok = j < segs.length && part(pat[i], segs[j]) && match(i + 1, j + 1);
+      memo.set(key, ok);
+      return ok;
+    };
+    return match(0, 0);
+  }
+
+  // How narrow a pattern is: fixed parts count most, then "*" parts.
+  const pathSpecificity = (pattern) =>
+    pathSegments(pattern).reduce((n, p) => n + (p === "**" ? 0 : p === "*" ? 1 : p.includes("*") ? 2 : 3), 0);
 
   // The Chrome match pattern used for permissions and content scripts.
   const originFor = (host) => `*://${host}/*`;
@@ -222,6 +273,7 @@ self.TR = (() => {
     let url;
     try { url = new URL(ctx.url); } catch { return fail("Enter a valid URL to test with."); }
     if (!hostMatches(rule.host, url.hostname)) return fail(`This URL isn't on ${rule.host}.`);
+    if (rule.path && !pathMatches(rule.path, url.pathname)) return fail(`This page isn't one of the rule's pages (${rule.path}).`);
     if (rule.urlFilter) {
       const re = toRegex(rule.urlFilter);
       if (!re) return fail("The URL filter isn't a valid pattern.");
@@ -688,7 +740,7 @@ self.TR = (() => {
     BUILT_INS, COLORS, NAME_RE, SOURCES, PICKS,
     CASE_OPS,
     uid, newLook, newVar, newCase, newRule, normalizeRule,
-    normalizeHost, hostMatches, originFor, siteUrl,
+    normalizeHost, hostMatches, originFor, siteUrl, normalizePath, pathMatches, pathSpecificity, pathSegments,
     regexError, render, optionalNames, extract, transformValue, urlText, evaluate, resolveBadge, firstMatch, decorate, bestSelector, selectorOptions, elementKind,
     readMeta, listMeta, labelValue, listLabels,
   };
