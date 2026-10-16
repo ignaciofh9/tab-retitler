@@ -146,6 +146,14 @@
       appliedRuleId: TR.firstMatch(list, ctx)?.ruleId ?? null,
       result: rule ? TR.evaluate(rule, ctx) : null,
       values: rule ? Object.fromEntries(rule.vars.map((v) => [v.id, TR.extract(v, ctx)])) : {},
+      // Where the rule's elements are on this page, in words.
+      places: rule ? Object.fromEntries([
+        ...rule.vars.filter((v) => v.from === "element" && v.selector).map((v) => v.selector),
+        ...[rule.badge, ...rule.badgeSwitch.cases.map((c) => c.badge)].map((l) => l.colorFrom).filter(Boolean),
+      ].map((sel) => {
+        const el = TR.sourceElement({ from: "element", selector: sel });
+        return [sel, el ? TR.describeElement(el) : null];
+      })) : {},
       // Colors of the labels the rule's icons take their color from.
       colors: rule ? Object.fromEntries([rule.badge, ...rule.badgeSwitch.cases.map((c) => c.badge)]
         .filter((l) => l.colorFrom).map((l) => [l.colorFrom, TR.elementColor(l.colorFrom)])) : {},
@@ -165,7 +173,7 @@
     for (const selector of selectors) {
       let el = null;
       try { el = document.querySelector(selector); } catch {}
-      if (el) out.push({ selector, selectors: [selector], text: squash(el.textContent).slice(0, 200), color: TR.colorOf(el) });
+      if (el) out.push({ selector, selectors: [selector], text: squash(el.textContent).slice(0, 200), color: TR.colorOf(el), where: TR.describeElement(el) });
     }
     return out;
   }
@@ -187,7 +195,7 @@
       // The first few get several selectors, so teaching can keep one that
       // also works on the other pages; the rest get just the best one.
       const selectors = elements.length < 30 ? TR.selectorOptions(el) : [TR.bestSelector(el)];
-      elements.push({ text, selector: selectors[0], selectors });
+      elements.push({ text, selector: selectors[0], selectors, where: TR.describeElement(el) });
       if (elements.length >= 80) break;
     }
     return {
@@ -225,7 +233,7 @@
         const known = byKey.get(key);
         if (!known) {
           const selectors = TR.selectorOptions(el);
-          const entry = { text, selector: selectors[0], selectors, color, more: [] };
+          const entry = { text, selector: selectors[0], selectors, color, more: [], where: TR.describeElement(el) };
           byKey.set(key, entry);
           list.push(entry);
         } else if (known.text !== text && !known.more.includes(text)) {
@@ -270,6 +278,54 @@
       apply();
     });
   });
+
+  // The side panel points at where a value comes from: a box around that
+  // element, scrolled into view, while the port stays open (the mouse is over
+  // it in the panel).
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== "highlight") return;
+    let box = null;
+    port.onMessage.addListener(({ source, label }) => {
+      box?.remove();
+      const el = TR.sourceElement(source);
+      box = el ? highlight(el, label) : null;
+    });
+    port.onDisconnect.addListener(() => box?.remove());
+  });
+
+  function highlight(el, label) {
+    const host = document.createElement("tab-retitler-highlight");
+    const root = host.attachShadow({ mode: "closed" });
+    root.innerHTML = `
+      <style>
+        :host { all: initial; }
+        .box { position: fixed; pointer-events: none; z-index: 2147483646; border: 2px solid #3b6cf6;
+          background: rgb(59 108 246 / 0.14); border-radius: 4px; box-shadow: 0 0 0 4px rgb(59 108 246 / 0.18); }
+        .tag { position: fixed; pointer-events: none; z-index: 2147483647; background: #3b6cf6; color: #fff;
+          font: 600 12px/1.4 ui-monospace, "SF Mono", Menlo, monospace; padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
+      </style>
+      <div class="box"></div><div class="tag"></div>`;
+    const box = root.querySelector(".box");
+    const tag = root.querySelector(".tag");
+    tag.textContent = label || "";
+    tag.hidden = !label;
+    document.documentElement.append(host);
+    const place = () => {
+      const r = el.getBoundingClientRect();
+      Object.assign(box.style, { left: `${r.left - 3}px`, top: `${r.top - 3}px`, width: `${r.width + 6}px`, height: `${r.height + 6}px` });
+      const above = r.top > 26;
+      Object.assign(tag.style, { left: `${Math.max(4, r.left - 3)}px`, top: above ? `${r.top - 26}px` : `${r.bottom + 6}px` });
+    };
+    const r = el.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) el.scrollIntoView({ block: "center", behavior: "smooth" });
+    place();
+    // Follow it while the page scrolls or moves.
+    let frame = requestAnimationFrame(function follow() {
+      place();
+      frame = requestAnimationFrame(follow);
+    });
+    return { remove: () => { cancelAnimationFrame(frame); host.remove(); } };
+  }
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.rules) apply();

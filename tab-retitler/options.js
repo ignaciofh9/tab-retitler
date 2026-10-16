@@ -499,6 +499,7 @@ function varRow(rule, v) {
     $$("input", row.mapRows).at(-2)?.focus();
   });
   renderMapRows(v, row);
+  pointAt(row.result, () => live?.tab?.id, () => v, () => `{${v.name}}`);
   row.pick = $("[data-action=pick]", root);
   row.pick.addEventListener("click", () => startPick(rule, v));
   row.pick.classList.toggle("active", picking?.key === v.id);
@@ -900,8 +901,10 @@ function badgeEditor(look, onChange, opts = {}) {
   });
   syncs.push(() => {
     page.hidden = !look.colorFrom;
-    $("code", page).textContent = look.colorFrom;
+    page.dataset.selector = look.colorFrom;
+    describePageColor(page);
   });
+  pointAt(page, () => live?.tab?.id, () => ({ from: "element", selector: look.colorFrom }), "color");
 
   text.value = look.text;
   text.addEventListener("input", () => {
@@ -936,6 +939,16 @@ function badgeEditor(look, onChange, opts = {}) {
 
   for (const sync of syncs) sync();
   return el;
+}
+
+// Says which label a look takes its color from: in words when the tab showing
+// has it ("a colored label next to “Status”"), else its selector.
+function describePageColor(row) {
+  const selector = row.dataset.selector;
+  const place = live?.state === "ok" ? live.info?.places?.[selector] : null;
+  const text = $(".be-page-text", row);
+  const code = Object.assign(document.createElement(place ? "span" : "code"), { textContent: place || selector });
+  text.replaceChildren("Color of ", code, " on each page, or the one chosen above where it's missing.");
 }
 
 // A short description of everything changed from the defaults, shown on the
@@ -1199,15 +1212,18 @@ function updateLive() {
   refs["live-text"].textContent = text;
   $("[data-action=teach]", refs.live).hidden = !(IS_PANEL && onRuleSite && live.state !== "blocked");
 
+  for (const row of $$(".be-page")) if (row.dataset.selector) describePageColor(row);
+
   // Value rows: what each one finds on this tab.
   for (const v of rule.vars) {
     const row = rowRefs.get(v.id);
     if (!row) continue;
     const value = info && onRuleSite ? info.values?.[v.id] : undefined;
+    const place = v.from === "element" ? info?.places?.[v.selector] : null;
     row.result.replaceChildren(...(value === undefined ? [] : value
-      ? ["On this tab: ", Object.assign(document.createElement("b"), { textContent: value })]
+      ? ["On this tab: ", Object.assign(document.createElement("b"), { textContent: value }), ...(place ? [`, ${place}`] : [])]
       : ["Not found on this tab"]));
-    row.result.title = value || "";
+    row.result.title = value ? value + (place ? `, ${place}` : "") : "";
   }
 
   // Badge cases: a small icon of each, and which one this tab uses.
@@ -1612,9 +1628,11 @@ function renderTeach(examples) {
     const value = Object.assign(document.createElement("span"), { className: "seg-text", textContent: Infer.run(p.source, ex) || "…" });
     const from = Object.assign(document.createElement("span"), {
       className: "seg-src",
-      textContent: describeSource(p.source) + (p.opt !== undefined ? " · only when found" : ""),
+      textContent: describeSource(p.source, ex) + (p.opt !== undefined ? " · only when found" : ""),
     });
     seg.append(value, name, from);
+    // Hovering shows where it is on the tab showing.
+    pointAt(seg, () => teach?.current?.tabId ?? ex.tabId, p.source, `{${p.name}}`);
     return seg;
   }));
 
@@ -1624,7 +1642,7 @@ function renderTeach(examples) {
   // Values whose source is still undecided.
   const undecided = fit.count > 0 ? fit.parts.filter((p) => p.lit === undefined && p.options.length > 1) : [];
   $("#teach-undecided").textContent = undecided
-    .map((p) => `{${p.name}} could come ${p.options.map(describeSource).join(" or ")}.`)
+    .map((p) => `{${p.name}} could come ${p.options.map((o) => describeSource(o, ex)).join(" or ")}.`)
     .join(" ");
   $("#teach-undecided").hidden = !undecided.length;
 
@@ -1717,7 +1735,10 @@ async function saveSplit() {
   toast(`Created ${made.length} rules, one for each kind of page.`);
 }
 
-function describeSource(src) {
+// Where a value comes from, in words. ex, an example page, says where its
+// elements are ("from a colored label next to “Status”") instead of giving
+// their selectors.
+function describeSource(src, ex) {
   if (src.from === "builtin") return src.name === "title" ? "from the whole page title" : "from the site name";
   const short = (s) => (s.length > 32 ? `${s.slice(0, 31)}…` : s);
   const ordinal = (n) => (n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : `${n}th`);
@@ -1734,7 +1755,11 @@ function describeSource(src) {
   else if (src.from === "meta") where = `from page metadata (${short(src.selector)})`;
   else if (src.from === "label") where = `next to “${short(src.selector)}”`;
   else if (src.from === "page") where = "from the page text";
-  else where = `from ${short(src.selector)}`;
+  else {
+    const found = ex && [...(ex.elements ?? []), ...(ex.styled ?? []), ...(ex.picked ?? [])]
+      .find((e) => e.where && (e.selector === src.selector || e.selectors?.includes(src.selector)));
+    where = found ? `from ${found.where}` : `from ${short(src.selector)}`;
+  }
   if (kind === "split") {
     const n = Number(rest.at(-1));
     const sep = rest.slice(0, -1).join(":").trim() || rest.slice(0, -1).join(":");
@@ -1748,6 +1773,48 @@ function describeSource(src) {
     src.map?.length && `looked up (${src.map.slice(0, 2).map((m) => `${m.from} → ${m.to}`).join(", ")}${src.map.length > 2 ? ", …" : ""})`,
   ].filter(Boolean);
   return changes.length ? `${where}, ${changes.join(", ")}` : where;
+}
+
+// While the mouse (or focus) is on el, the tab outlines the element a value
+// is read from and scrolls to it. tabId(), and source and label when they're
+// functions, are asked each time, since they can change. Only for values that
+// sit in one place on the page.
+function pointAt(el, tabId, source, label) {
+  if (!chrome.tabs?.connect) return;
+  const now = (x) => (typeof x === "function" ? x() : x);
+  const usable = () => {
+    const src = now(source);
+    return ["element", "label"].includes(src?.from) && !!src.selector;
+  };
+  let port = null;
+  const show = () => {
+    hide();
+    const id = tabId();
+    if (!id || !usable()) return;
+    const src = now(source);
+    try {
+      port = chrome.tabs.connect(id, { name: "highlight" });
+      port.onDisconnect.addListener(() => void chrome.runtime.lastError);
+      port.postMessage({ source: { from: src.from, selector: src.selector }, label: now(label) });
+    } catch {
+      port = null;
+    }
+  };
+  const hide = () => {
+    port?.disconnect();
+    port = null;
+  };
+  if (typeof source !== "function") {
+    if (!usable()) return;
+    el.classList.add("points");
+    if (!el.hasAttribute("tabindex") && !el.matches("button, input, a")) el.tabIndex = 0;
+  }
+  // Marked only while it can point at something.
+  el.addEventListener("mouseenter", () => el.classList.toggle("points", usable()));
+  el.addEventListener("mouseenter", show);
+  el.addEventListener("mouseleave", hide);
+  el.addEventListener("focus", show);
+  el.addEventListener("blur", hide);
 }
 
 function hostPath(url) {

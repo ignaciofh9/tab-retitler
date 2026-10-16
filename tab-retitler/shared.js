@@ -736,7 +736,10 @@ self.TR = (() => {
   // The visible text of an element, with spaces between its parts.
   const textOf = (el) => squash([...el.querySelectorAll("*")].length ? el.innerText ?? el.textContent : el.textContent);
 
-  function valueNextTo(el, explicit) {
+  const valueNextTo = (el, explicit) => valueAfter(el, explicit)?.value ?? null;
+
+  // The element holding a label's value, and the value.
+  function valueAfter(el, explicit) {
     const own = labelKey(ownText(el)).toLowerCase();
     const tries = [];
     if (el.localName === "dt") tries.push(el.nextElementSibling);
@@ -750,7 +753,7 @@ self.TR = (() => {
     for (const t of tries) {
       if (!t || NOT_LABELS.has(t.localName) && !["dd", "td", "input", "select", "textarea", "a"].includes(t.localName)) continue;
       const v = squash(t.value ?? textOf(t));
-      if (v && v.length <= 200 && labelKey(v).toLowerCase() !== own) return v;
+      if (v && v.length <= 200 && labelKey(v).toLowerCase() !== own) return { node: t, value: v };
     }
     return null;
   }
@@ -773,6 +776,94 @@ self.TR = (() => {
         if (v) return v;
       }
     }
+    return null;
+  }
+
+  // The element a label's value is in, for pointing it out on the page.
+  function labelElement(label) {
+    const want = labelKey(label).toLowerCase();
+    for (const el of document.body?.querySelectorAll("*") ?? []) {
+      if (inlinePair(el)?.key.toLowerCase() === want) return el;
+      const l = labelOf(el);
+      if (l?.key.toLowerCase() === want) {
+        const found = valueAfter(el, l.explicit);
+        if (found) return found.node;
+      }
+    }
+    return null;
+  }
+
+  // ---------- Saying where an element is ----------
+
+  // Plain words for where an element sits on its page, for people rather
+  // than for finding it again: "the page heading", "a colored label next to
+  // “Status”", "a link in the menu".
+  function describeElement(el) {
+    const column = columnOf(el);
+    const near = column ? null : labelNear(el);
+    return [
+      kindWords(el),
+      near && `next to “${near}”`,
+      column && `in the “${column}” column`,
+      !column && areaOf(el) && `in the ${areaOf(el)}`,
+    ].filter(Boolean).join(" ");
+  }
+
+  function kindWords(el) {
+    const tag = el.localName;
+    if (tag === "h1") return document.querySelectorAll("h1").length === 1 ? "the page heading" : "a main heading";
+    if (/^h[2-6]$/.test(tag)) return "a heading";
+    if (el.closest("a")) return "a link";
+    if (el.closest("button, [role=button]")) return "a button";
+    if ([el, el.parentElement, el.parentElement?.parentElement].some((e) => e && labelColor(e))) return "a colored label";
+    if (["input", "select", "textarea"].includes(tag)) return "a field";
+    if (el.closest("li")) return "a list item";
+    if (el.closest("td, th")) return "a table cell";
+    return "text";
+  }
+
+  // The label just before the element or a box around it.
+  function labelNear(el) {
+    for (let e = el, up = 0; e && up < 3; e = e.parentElement, up++) {
+      const inline = inlinePair(e);
+      if (inline) return inline.key;
+      const prev = e.previousElementSibling;
+      const l = prev && labelOf(prev);
+      if (l) return l.key;
+    }
+    return null;
+  }
+
+  // For a table cell, its column's heading.
+  function columnOf(el) {
+    const cell = el.closest("td");
+    const table = cell?.closest("table");
+    if (!table) return null;
+    const i = [...cell.parentElement.children].indexOf(cell);
+    const head = table.querySelector("thead tr") ?? table.querySelector("tr");
+    const th = head?.children[i];
+    const text = th && th !== cell && squash(th.textContent);
+    return text && text.length <= 40 ? text : null;
+  }
+
+  function areaOf(el) {
+    const areas = [
+      ["dialog, [role=dialog]", "dialog"],
+      ["nav, [role=navigation]", "menu"],
+      ["header, [role=banner]", "header"],
+      ["aside, [role=complementary]", "sidebar"],
+      ["footer, [role=contentinfo]", "footer"],
+    ];
+    return areas.find(([sel]) => el.closest(sel))?.[1] ?? null;
+  }
+
+  // The element a value is read from, or null for values that aren't in one
+  // place on the page (the URL, the title, metadata, all the page's text).
+  function sourceElement(src) {
+    if (src.from === "element" && src.selector) {
+      try { return document.querySelector(src.selector); } catch { return null; }
+    }
+    if (src.from === "label" && src.selector) return labelElement(src.selector);
     return null;
   }
 
@@ -801,6 +892,6 @@ self.TR = (() => {
     uid, newLook, newVar, newCase, newRule, normalizeRule,
     normalizeHost, hostMatches, originFor, siteUrl, normalizePath, pathMatches, pathSpecificity, pathSegments,
     regexError, render, optionalNames, extract, transformValue, urlText, evaluate, resolveBadge, firstMatch, decorate, bestSelector, selectorOptions, elementKind,
-    readMeta, listMeta, labelValue, listLabels, labelColor, elementColor, colorOf,
+    readMeta, listMeta, labelValue, listLabels, labelColor, elementColor, colorOf, describeElement, sourceElement,
   };
 })();
