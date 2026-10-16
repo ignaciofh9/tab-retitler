@@ -40,7 +40,8 @@ function setPath(obj, path, value) {
   keys.reduce((o, k) => o[k], obj)[last] = value;
 }
 
-init();
+// After every script has loaded, workbench.js included.
+addEventListener("DOMContentLoaded", init);
 
 async function init() {
   // The side panel has no tab of its own; the options page does.
@@ -61,10 +62,10 @@ async function init() {
 
   renderList();
   renderEditor();
-  if (IS_PANEL) {
-    wireTeach();
-    watchTabs();
-  }
+  wireTeach();
+  wireBoard();
+  if (IS_PANEL) watchTabs();
+  else openBoardFromDraft();
 }
 
 // The side panel shows either the rule list or one rule's editor.
@@ -309,9 +310,13 @@ function renderEditor() {
   $("[data-action=delete]", editor).addEventListener("click", () => deleteRule());
   $("[data-action=share]", editor).addEventListener("click", () => openShare([rule.id]));
   $("[data-action=back]", editor).addEventListener("click", () => select(null));
+  // In the side panel, teach with the tab beside it; in a full tab, with
+  // every open tab on the site.
+  $("[data-action=teach]", editor).textContent = IS_PANEL ? "Teach with this tab" : "Teach on all open tabs";
   $("[data-action=teach]", editor).addEventListener("click", async () => {
     if (!(await requestAccess(rule.host))) return;
-    openTeach(rule.id);
+    if (IS_PANEL) openTeach(rule.id);
+    else openBoard(rule.host, rule.id);
   });
   $("[data-action=add-var]", editor).addEventListener("click", addVar);
 
@@ -660,8 +665,10 @@ function setPicking(state) {
     $("span", row.pick).textContent = picking?.key === id ? "Picking…" : "Pick";
   }
   for (const b of $$("[data-pick-key]")) b.classList.toggle("active", picking?.key === b.dataset.pickKey);
-  const teachPick = $(".suggest-chip.pick .suggest-text");
-  if (teachPick) teachPick.textContent = picking?.key === "teach-pick" ? "Picking…" : "Pick on page";
+  for (const b of $$(".suggest-chip.pick")) {
+    const text = $(".suggest-text", b);
+    if (text) text.textContent = picking?.key === b.dataset.pickKey ? "Picking…" : "Pick on page";
+  }
 }
 
 chrome.runtime.onMessage?.addListener((msg) => {
@@ -1210,7 +1217,7 @@ function updateLive() {
   }
   refs.live.className = `live ${tone}`;
   refs["live-text"].textContent = text;
-  $("[data-action=teach]", refs.live).hidden = !(IS_PANEL && onRuleSite && live.state !== "blocked");
+  $("[data-action=teach]", refs.live).hidden = IS_PANEL ? !(onRuleSite && live.state !== "blocked") : !rule.host;
 
   for (const row of $$(".be-page")) if (row.dataset.selector) describePageColor(row);
 
@@ -1335,35 +1342,57 @@ async function loadTeachTab() {
 // apply to this tab.
 async function guessFor(tabId, page) {
   const rule = teach.ruleId && rules.find((r) => r.id === teach.ruleId);
-  if (rule) {
-    const res = (await inspectTab(tabId, rule))?.result;
-    if (!res?.matched) return null;
-    const sw = rule.badgeSwitch;
-    const hasIcon = sw.enabled || !!TR.resolveBadge(rule.badge, {});
-    const chosen = res.caseId ? sw.cases.find((c) => c.id === res.caseId)?.badge : rule.badge;
-    // As this tab gets it: badge text filled in, color taken from its label.
-    return { title: res.title, look: hasIcon ? TR.newLook({ ...(res.badge ?? chosen), colorFrom: "" }) : null };
-  }
-
+  if (rule) return guessFromRule(rule, tabId);
   if (!teach.saved.length) return null;
   const fit = Infer.fit(teach.saved);
   if (!fit?.count) return null;
-  const [variant] = Infer.variants(fit, 1);
-  const lookFit = Infer.fitLook(teach.saved, fit);
+  return guessFromFit(tabId, page, fit, Infer.fitLook(teach.saved, fit));
+}
+
+// What a saved rule does on a tab right now, as an example would hold it.
+async function guessFromRule(rule, tabId) {
+  const res = (await inspectTab(tabId, rule))?.result;
+  if (!res?.matched) return null;
+  const sw = rule.badgeSwitch;
+  const hasIcon = sw.enabled || !!TR.resolveBadge(rule.badge, {});
+  const chosen = res.caseId ? sw.cases.find((c) => c.id === res.caseId)?.badge : rule.badge;
+  // As this tab gets it: badge text filled in, color taken from its label.
+  return { title: res.title, look: hasIcon ? TR.newLook({ ...(res.badge ?? chosen), colorFrom: "" }) : null, choices: [res.title] };
+}
+
+// What the rules that fit the examples give on a tab: the simplest one's
+// title and icon, and up to 4 different titles the others give (choices,
+// simplest first). Checks up to `limit` possible rules.
+async function guessFromFit(tabId, page, fit, lookFit, limit = 1) {
+  const variants = Infer.variants(fit, limit);
   // The value the icon switches on may be one the title doesn't use.
   const keySource = lookFit?.mode === "switch"
     ? (lookFit.newVar ? { from: "element", selector: lookFit.newVar.selector, regex: "" } : fit.parts.find((p) => p.name === lookFit.on)?.source)
     : null;
   // Named values, for badge text: the title's, and ones only the badge uses.
   const named = lookFit ? [...fit.vars, ...(lookFit.textVars ?? [])].map((v) => ({ ...v, regex: v.regex ?? "" })) : [];
-  const sources = [...variant.map((p) => p.source), keySource, ...named].filter((s) => s && s.from !== "builtin");
+  const sources = [];
+  const index = new Map();
+  for (const src of [...variants.flat().map((p) => p.source), keySource, ...named]) {
+    if (!src || src.from === "builtin") continue;
+    const key = Infer.sourceKey(src);
+    if (!index.has(key)) index.set(key, sources.push(src) - 1);
+  }
   const colorFrom = lookFit?.colorFrom?.selector;
   const res = await askTab(tabId, { type: "probe", sources, colors: colorFrom ? [colorFrom] : [] });
   if (!res) return null;
   const valueOf = (src) => src.from === "builtin"
     ? (src.name === "title" ? page.title.replace(/\s+/g, " ").trim() : new URL(page.url).hostname)
-    : res.values[sources.indexOf(src)];
-  if (variant.some((p) => p.source && p.opt === undefined && !valueOf(p.source))) return null; // a value it needs is missing here
+    : res.values[index.get(Infer.sourceKey(src))];
+
+  const choices = [];
+  for (const v of variants) {
+    // A rule missing a value it needs wouldn't touch this tab.
+    if (v.some((p) => p.source && p.opt === undefined && !valueOf(p.source))) continue;
+    const title = Infer.renderVariant(v, valueOf);
+    if (!choices.includes(title)) choices.push(title);
+  }
+  if (!choices.length) return null;
 
   let look = null;
   if (lookFit?.mode === "always") look = lookFit.look;
@@ -1377,7 +1406,7 @@ async function guessFor(tabId, page) {
     const shown = TR.resolveBadge(look, vars, { elementColor: () => res.colors?.[0] ?? null });
     look = TR.newLook({ ...(shown ?? TR.newLook()), colorFrom: "" });
   }
-  return { title: Infer.renderVariant(variant, valueOf), look };
+  return { title: choices[0], look, choices: choices.slice(0, 4) };
 }
 
 // Shows whether the box holds a guess, with the Looks right button.
@@ -1477,7 +1506,11 @@ function refit() {
   teach.fit = Infer.fit(examples);
   // Keep a chosen scope while it's still an option; otherwise the narrowest.
   teach.paths = teach.fit?.paths ?? [];
-  if (!teach.paths.includes(teach.path)) teach.path = teach.paths[0];
+  if (teach.board) {
+    const scopes = boardScopes(teach.paths);
+    teach.paths = scopes.paths;
+    if (!teach.pathChosen || !teach.paths.includes(teach.path)) teach.path = scopes.path;
+  } else if (!teach.paths.includes(teach.path)) teach.path = teach.paths[0];
   teach.lookFit = teach.fit && Infer.fitLook(examples, teach.fit);
   // One entry per number of examples; typing just updates the latest.
   const count = teach.fit?.count ?? 0;
@@ -1485,6 +1518,7 @@ function refit() {
   if (last && last.examples === examples.length) last.count = count;
   else if (examples.length) teach.history.push({ examples: examples.length, count });
   renderTeach(examples);
+  if (teach.board) renderBoard();
   scheduleAsks();
 }
 
@@ -1494,7 +1528,8 @@ let askTimer;
 let askRun = 0;
 function scheduleAsks() {
   clearTimeout(askTimer);
-  askTimer = setTimeout(findAsks, 400);
+  // On the all-tabs view every row gets a guess instead.
+  askTimer = setTimeout(teach?.board ? fillBoard : findAsks, teach?.board ? 250 : 400);
 }
 
 // Tries the possible rules on other open tabs on the site. A tab where they
@@ -1886,6 +1921,7 @@ async function renderScope() {
     $(".scope-desc", b).textContent = describe(p);
     b.addEventListener("click", () => {
       teach.path = p;
+      teach.pathChosen = true;
       for (const o of $$(".scope-option", list)) o.setAttribute("aria-checked", o.dataset.path === p);
       scheduleAsks(); // questions only cover pages in scope
     });
@@ -2123,6 +2159,7 @@ function wireTeach() {
     refit();
   });
   $("#teach-back").addEventListener("click", closeTeach);
+  $("#teach-board").addEventListener("click", openBoardTab);
   $("#teach-save").addEventListener("click", saveTeach);
   $("#teach-split-go").addEventListener("click", saveSplit);
   $("#teach-confirm").addEventListener("click", () => {

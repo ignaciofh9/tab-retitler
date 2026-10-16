@@ -60,6 +60,10 @@
         <h2 class="teach-heading" id="teach-heading">Build from examples</h2>
       </div>
       <p class="teach-intro">Type the title you want for this tab, and the tab shows it as you go. Tab Retitler finds where each part comes from and writes the rule. Switch to more tabs on the site and do the same to make it work for all of them.</p>
+      <button class="btn ghost sm teach-board-open" type="button" id="teach-board">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <span>Teach on all open tabs at once</span>
+      </button>
 
       <section class="card">
         <div class="teach-tab">
@@ -72,7 +76,7 @@
         <div class="field">
           <label for="teach-want">Title you want for this tab</label>
           <input id="teach-want" class="title-input" spellcheck="false" autocomplete="off">
-          <p class="hint" id="teach-hint">Start from the page's own title and edit it into what you want.</p>
+          <p class="hint" id="teach-hint">Type it as you'd like to see it. Parts can come from the address, the page's title or text on the page.</p>
           <div class="teach-guess" id="teach-guess" hidden>
             <span>This is the rule's guess for this tab. Fix what's wrong, or confirm it.</span>
             <button class="btn sm" type="button" id="teach-confirm">Looks right</button>
@@ -114,9 +118,11 @@
           <p class="hint">The possible rules give different titles on these open tabs. Pick the right one and it becomes an example.</p>
           <div class="ask-list" id="teach-ask-list"></div>
         </div>
-        <h3 class="teach-sub">Examples</h3>
-        <ol class="teach-examples" id="teach-examples"></ol>
-        <p class="hint" id="teach-note"></p>
+        <div id="teach-examples-box">
+          <h3 class="teach-sub">Examples</h3>
+          <ol class="teach-examples" id="teach-examples"></ol>
+          <p class="hint" id="teach-note"></p>
+        </div>
         <div class="teach-split" id="teach-split" hidden>
           <h3 class="teach-sub">These need separate rules</h3>
           <p class="hint">One rule can't produce all of these titles, but each kind of page fits a rule of its own.</p>
@@ -128,7 +134,62 @@
         </div>
       </section>
     </main>
+
+    <main id="board" class="board full-only" aria-label="Teach on all open tabs">
+      <div class="rule-head">
+        <button class="btn icon" type="button" id="board-back" title="Back" aria-label="Back">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="board-titles">
+          <h2 class="teach-heading" id="board-heading">Build a rule</h2>
+          <span class="board-host"><span id="board-host"></span> · <span id="board-count"></span></span>
+        </div>
+      </div>
+      <p class="teach-intro">Every open tab on the site is here. Type the title you want on any of them: each one you fill in or confirm teaches the rule, and the others show what it would make of them, here and on the tabs themselves.</p>
+      <div class="board-main">
+        <section class="card board-table">
+          <div class="board-access" id="board-access" hidden>
+            <span>Tab Retitler isn't allowed on this site yet, so it can't read its tabs.</span>
+            <button class="btn sm allow" type="button" id="board-allow">Allow access</button>
+          </div>
+          <div class="board-rows" id="board-rows"></div>
+          <p class="hint" id="board-empty" hidden>No tabs open on this site. Open a few of its pages, and they'll show up here.</p>
+        </section>
+        <div class="board-side" id="board-side">
+          <section class="card board-start" id="board-start">
+            <h3 class="teach-sub">The rule</h3>
+            <p class="hint">Type the title you want on any tab to start. Each tab you fill in or confirm makes the rule fit more pages.</p>
+          </section>
+        </div>
+      </div>
+    </main>
   </div>
+
+  <template id="board-row-tpl">
+    <div class="board-row">
+      <canvas class="case-icon board-icon" width="32" height="32" aria-hidden="true"></canvas>
+      <div class="board-page">
+        <div class="board-title"></div>
+        <div class="board-path"></div>
+      </div>
+      <div class="board-want">
+        <input class="title-input" spellcheck="false" autocomplete="off" aria-label="Title you want for this tab">
+        <div class="board-status"></div>
+      </div>
+      <div class="board-actions">
+        <button class="btn icon" type="button" data-action="icon" title="Icon for this tab" aria-label="Icon for this tab" aria-expanded="false">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11.5" cy="11.5" r="2.8" fill="currentColor"/></svg>
+        </button>
+        <button class="btn icon" type="button" data-action="go" title="Go to this tab" aria-label="Go to this tab">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5h6.5V10M12.5 3.5L4 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="btn icon" type="button" data-action="clear" title="Clear this example" aria-label="Clear this example">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="board-icon-editor" hidden></div>
+    </div>
+  </template>
 
   <dialog class="dialog" id="share-dialog" aria-labelledby="share-heading">
     <header class="dialog-head">
@@ -510,5 +571,6 @@
   <script src="infer.js"></script>
   <script src="share.js"></script>
   <script src="options.js"></script>
+  <script src="workbench.js"></script>
 </body>
 </html>

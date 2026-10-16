@@ -8,6 +8,7 @@ A Chrome extension that renames tabs and badges their icons using rules based on
 
 - **Renames tabs** from parts of the address, the page title, or text on the page: `4521 · Garden tools` instead of `Shop – Product page`.
 - **Learns rules from examples.** Type the title you want for a tab and it works out where each part comes from. Give it examples from more tabs and it keeps every rule that fits them all, narrowing down as you go and asking on your other open tabs when it's unsure. It generalizes across examples (`/browse/ABC-12` and `/issues/WEB-7` share one rule), and knows URL folders, query parameters, title parts split on separators, page metadata (Open Graph, schema.org), and the text next to a label like "Status". It learns case changes, slugs (`fix-login-redirect` → `Fix login redirect`), dropped leading zeros, optional parts (`{num}{? [{status}]}`), lookups ("In Progress" → `WIP`), and when examples need separate rules for different kinds of page.
+- **Teaches on every open tab at once.** A full-tab view lists all the site's open tabs, each with the title you want for it. Fill in any of them and the rest show the rule's guess, in the table and on the tabs themselves; confirm a guess, correct it, or answer "Which is right?" where the possible rules disagree.
 - **Scopes rules to the right pages.** Each rule can be limited to pages like `/products/*` (`*` is one part of the path, `**` anything after). Teaching suggests the scope from your examples (`/acme/web/pull/42` gives `/acme/web/pull/*`, widening to `/*/*/pull/*` once you add another repository), shows how many open tabs each option covers, and puts specific rules ahead of broader ones.
 - **Changes icons:** a dot or short text badge (round, square or a corner flag, in any corner and size), an outline, or a tint, gray or fade. Icons can follow the page: pick a label like a task's status and the icon takes that label's color on every tab, including statuses it hasn't seen. Badge text is learned like titles, so `12` on one tab and `7` on another becomes the number from each tab's address.
 - **Edits next to the page.** The real tab is the preview: rules and examples show on it as you type, and hovering a value in the panel outlines where it is on the page.
@@ -56,6 +57,7 @@ Plain JavaScript with no dependencies or build step. In `tab-retitler/`:
 | `infer.js` | Builds rules from examples: splits the wanted title into fixed text and values, generates ways to read each value lined up across all examples, and keeps every rule that fits them (a version space). Also learns optional parts, lookups, separate rules per kind of page, and icons. |
 | `share.js` | Share codes and JSON. Codes are a compact binary layout, deflated, with a checksum. |
 | `options.html`, `options.js`, `options.css` | The editor, used both in the side panel and as a full page. |
+| `workbench.js` | Teaching on every open tab of a site at once, in a full tab. |
 | `picker.js` | Point-and-click element picker, injected into the page. |
 | `preview-shim.js` | Testing only: lets `options.html` open as a plain web page. Left out of store builds. |
 
