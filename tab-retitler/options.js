@@ -70,6 +70,8 @@ async function init() {
 // The side panel shows either the rule list or one rule's editor.
 function setView(view) {
   document.body.dataset.view = view;
+  // Leaving the teach view puts its example tabs back under their rules.
+  if (view !== "teach") endPreviews();
 }
 
 // ---------- Saving ----------
@@ -1296,7 +1298,7 @@ async function loadTeachTab() {
   teach.current = {
     tabId: tab.id,
     ...page,
-    want: prior?.want ?? guess?.title ?? page.title,
+    want: prior?.want ?? guess?.title ?? "",
     look: prior?.look ?? guess?.look ?? null,
     hint: prior?.hint ?? null,
     picked: mergePicked(prior?.picked, page.picked),
@@ -1367,7 +1369,7 @@ function syncGuess() {
   const guessed = !!teach?.current?.guessed;
   $("#teach-guess").hidden = !guessed;
   $("#teach-hint").hidden = guessed;
-  if (!guessed) setTeachHint("Start from the page's own title and edit it into what you want.", false);
+  if (!guessed) setTeachHint("Type it as you'd like to see it. Parts can come from the address, the page's title or text on the page.", false);
 }
 
 // Editing or confirming a guess makes it a real example.
@@ -1390,7 +1392,7 @@ function setTeachHint(text, isError) {
 function teachTabChanged() {
   const cur = teach?.current;
   if (cur && live?.tab?.id === cur.tabId && live.tab.url === cur.url) return; // same page, e.g. its title just changed
-  if (cur && !cur.guessed && cur.want.trim() && (cur.want !== cur.title || cur.look || cur.confirmed)) teach.saved.push(cur);
+  if (cur && !cur.guessed && (cur.want.trim() || cur.look)) teach.saved.push(cur);
   loadTeachTab();
 }
 
@@ -1408,6 +1410,45 @@ async function harvestWant() {
   refit();
 }
 
+// ---------- The real tab as the preview ----------
+
+// Each example's tab shows the title typed for it and the icon chosen, until
+// teaching ends. A port per tab: when the panel closes, the tabs notice and
+// go back to their rules.
+const previewPorts = new Map();
+
+function previewExample(ex) {
+  if (!ex?.tabId || !chrome.tabs?.connect) return;
+  let port = previewPorts.get(ex.tabId);
+  if (!port) {
+    try {
+      port = chrome.tabs.connect(ex.tabId, { name: "preview" });
+    } catch {
+      return;
+    }
+    port.onDisconnect.addListener(() => {
+      void chrome.runtime.lastError; // the tab closed or navigated
+      if (previewPorts.get(ex.tabId) === port) previewPorts.delete(ex.tabId);
+    });
+    previewPorts.set(ex.tabId, port);
+  }
+  try {
+    port.postMessage({ title: ex.want.trim(), badge: ex.look ? TR.resolveBadge(ex.look, {}) : null });
+  } catch {
+    previewPorts.delete(ex.tabId);
+  }
+}
+
+function endPreview(tabId) {
+  previewPorts.get(tabId)?.disconnect();
+  previewPorts.delete(tabId);
+}
+
+function endPreviews() {
+  for (const port of previewPorts.values()) port.disconnect();
+  previewPorts.clear();
+}
+
 function teachExamples() {
   const cur = teach.current;
   return [...teach.saved, ...(cur && !cur.guessed && cur.want.trim() ? [cur] : [])];
@@ -1415,6 +1456,7 @@ function teachExamples() {
 
 function refit() {
   if (!teach) return;
+  previewExample(teach.current);
   const examples = teachExamples();
   teach.fit = Infer.fit(examples);
   // Keep a chosen scope while it's still an option; otherwise the narrowest.
@@ -1608,6 +1650,7 @@ function renderTeach(examples) {
       remove.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
       remove.addEventListener("click", () => {
         teach.saved = teach.saved.filter((s) => s !== e);
+        if (!teachExamples().some((x) => x.tabId === e.tabId)) endPreview(e.tabId);
         refit();
       });
       li.append(remove);
@@ -2023,6 +2066,7 @@ function wireTeach() {
     if (!teach?.current) return;
     confirmGuess();
     teach.current.want = e.target.value;
+    previewExample(teach.current);
     clearTimeout(teachTimer);
     teachTimer = setTimeout(harvestWant, 200);
   });
@@ -2032,21 +2076,40 @@ function wireTeach() {
 
 const faviconCache = new Map();
 
-// Chrome's cached favicon for a site, via the "favicon" permission.
+// A site's own icon: as one of its tabs drew it before changing anything, or
+// else Chrome's cached favicon via the "favicon" permission, which may still
+// show a badge we drew.
 function loadFavicon(pageUrl) {
   let origin;
   try { origin = new URL(pageUrl).origin; } catch { return Promise.resolve(null); }
   if (!IN_EXTENSION) return Promise.resolve(null);
   if (!faviconCache.has(origin)) {
-    faviconCache.set(origin, new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => resolve(null);
-      img.src = chrome.runtime.getURL(`/_favicon/?pageUrl=${encodeURIComponent(origin + "/")}&size=64`);
-    }));
+    faviconCache.set(origin, (async () => {
+      const key = `icon:${origin}`;
+      const own = chrome.storage.session && (await chrome.storage.session.get(key).catch(() => ({})))[key];
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        img.src = own || chrome.runtime.getURL(`/_favicon/?pageUrl=${encodeURIComponent(origin + "/")}&size=64`);
+      });
+    })());
   }
   return faviconCache.get(origin);
 }
+
+// A tab drew its site's icon: redraw previews with it.
+chrome.storage?.session?.onChanged?.addListener((changes) => {
+  const origins = Object.keys(changes).filter((k) => k.startsWith("icon:")).map((k) => k.slice(5));
+  if (!origins.length) return;
+  origins.forEach((o) => faviconCache.delete(o));
+  renderList();
+  if (current()) updateLive();
+  if (teach) {
+    renderTeachIcon();
+    refit();
+  }
+});
 
 async function paintIcon(canvas, pageUrl, badge) {
   const token = String(Number(canvas.dataset.token || 0) + 1);

@@ -68,6 +68,7 @@ async function reapplyInOpenTabs(matches) {
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === "page-icon") return void savePageIcon(msg);
   if (msg.type !== "render-badge") return;
   renderBadge(msg).then(sendResponse, (err) => {
     console.warn("Tab Retitler: could not badge icon", err);
@@ -76,17 +77,28 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true; // keep the channel open for the async response
 });
 
-async function renderBadge({ iconHref, pageUrl, badge }) {
+// Sites' own icons, as the tab script drew them before changing anything, for
+// the side panel's previews. Chrome's favicon cache can't be trusted for
+// that: it keeps whatever icon a tab showed last, which may be ours.
+async function savePageIcon({ origin, data }) {
+  if (typeof origin !== "string" || typeof data !== "string" || !data.startsWith("data:image/png") || data.length > 200000) return;
+  const key = `icon:${origin}`;
+  if ((await chrome.storage.session.get(key))[key] !== data) await chrome.storage.session.set({ [key]: data });
+}
+
+async function renderBadge({ iconHref, iconData, pageUrl, badge }) {
   const canvas = new OffscreenCanvas(ICON_SIZE, ICON_SIZE);
   const ctx = canvas.getContext("2d");
-  ctx.drawImage(await sourceIcon(iconHref, pageUrl), 0, 0, ICON_SIZE, ICON_SIZE);
+  const icon = iconData?.startsWith("data:image/png") ? await loadBitmap(iconData) : await sourceIcon(iconHref, pageUrl);
+  ctx.drawImage(icon, 0, 0, ICON_SIZE, ICON_SIZE);
   TR.decorate(ctx, ICON_SIZE, badge);
   return toDataUrl(await canvas.convertToBlob({ type: "image/png" }));
 }
 
-// Try the icon the page declares first. If that fails (it's on a host we have
-// no access to, or it's an SVG, which workers can't decode), fall back to the
-// copy in Chrome's own favicon cache via the "favicon" permission.
+// When the tab couldn't draw its own icon: try the icon the page declares. If
+// that fails too (it's on a host we have no access to, or it's an SVG, which
+// workers can't decode), fall back to the copy in Chrome's own favicon cache
+// via the "favicon" permission. That copy may already be badged.
 async function sourceIcon(iconHref, pageUrl) {
   try {
     return await loadBitmap(iconHref);

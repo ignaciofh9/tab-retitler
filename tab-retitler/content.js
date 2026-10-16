@@ -18,6 +18,8 @@
   let ourIcon = null;
   let run = 0;
   let stopped = false;
+  // What the side panel shows on this tab while teaching: { title, badge }.
+  let preview = null;
 
   // Whether this copy can still reach the extension. It can't once the
   // extension is removed, turned off, reloaded or updated.
@@ -62,16 +64,16 @@
       return stop(); // the extension is gone
     }
     if (stopped) return;
-    const result = TR.firstMatch(rules, ctx);
-    document.title = result ? result.title : original.title;
+    const result = preview ?? TR.firstMatch(rules, ctx);
+    document.title = result?.title || original.title;
 
     if (!result?.badge) return restoreIcon();
     try {
-      // The page can't draw a cross-origin favicon onto a canvas, so the
-      // background worker fetches and draws it and hands back a data URL.
+      // The background worker draws the badge and hands back a data URL.
       const dataUrl = await chrome.runtime.sendMessage({
         type: "render-badge",
         iconHref: original.iconHref,
+        iconData: await originalIcon,
         pageUrl: location.href,
         badge: result.badge,
       });
@@ -80,6 +82,30 @@
       // Extension was reloaded or removed; this copy of the script is orphaned.
     }
   }
+
+  // The page's own icon as a PNG, drawn here before anything changes it. The
+  // background worker can't decode SVG icons or fetch ones from other hosts,
+  // and Chrome's favicon cache holds whatever the tab showed last, which may
+  // be our badged icon: drawing on that would keep an old tint or badge.
+  // null when the icon is on another host that doesn't allow it.
+  const originalIcon = new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 64;
+        canvas.getContext("2d").drawImage(img, 0, 0, 64, 64);
+        resolve(canvas.toDataURL("image/png"));
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = original.iconHref;
+  });
+  // The side panel draws its previews with it too.
+  originalIcon.then((data) => data && chrome.runtime.sendMessage({ type: "page-icon", origin: location.origin, data }).catch(() => {}));
 
   // The page's declared icon, preferring the largest non-SVG one.
   function pickIconHref() {
@@ -228,6 +254,21 @@
     if (msg.type !== "inspect") return;
     inspect(msg.rule).then(sendResponse);
     return true; // async response
+  });
+
+  // While teaching, the side panel shows the example on its tab: the title
+  // typed and the icon chosen. It ends when the panel lets go of the port,
+  // including when the panel closes.
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== "preview") return;
+    port.onMessage.addListener((msg) => {
+      preview = msg;
+      apply();
+    });
+    port.onDisconnect.addListener(() => {
+      preview = null;
+      apply();
+    });
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
