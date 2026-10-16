@@ -47,6 +47,10 @@ self.TR = (() => {
     tint: "none",         // none | color | gray | fade
     tintColor: COLORS[0],
     tintAmount: 50,       // percent
+    // A CSS selector, usually a status pill or tag. When set, the badge,
+    // outline and tint use that element's color on each page, and the colors
+    // above are only used where it isn't found.
+    colorFrom: "",
     ...overrides,
   });
 
@@ -290,7 +294,7 @@ self.TR = (() => {
 
     const title = (rule.title.trim() && render(rule.title, vars)) || ctx.title;
     const { badge, caseId } = chooseBadge(rule, vars);
-    return { matched: true, vars, title, badge: resolveBadge(badge, vars), caseId };
+    return { matched: true, vars, title, badge: resolveBadge(badge, vars, ctx), caseId };
   }
 
   // Returns the badge settings to use, and which switch case picked them
@@ -319,9 +323,12 @@ self.TR = (() => {
   }
 
   // Turns look settings into what gets drawn, filling in {values} in the
-  // badge text. Returns null when there's nothing to change.
-  function resolveBadge(b, vars) {
+  // badge text and, on a page, the color it takes from an element. Returns
+  // null when there's nothing to change.
+  function resolveBadge(b, vars, ctx) {
     const look = newLook(b);
+    const color = look.colorFrom && ctx?.elementColor?.(look.colorFrom);
+    if (color) Object.assign(look, { color, outlineColor: color, tintColor: color });
     if (look.style === "text") {
       look.text = [...render(look.text, vars)].slice(0, 3).join("");
       if (!look.text) look.style = "none";
@@ -338,6 +345,58 @@ self.TR = (() => {
     }
     return null;
   }
+
+  // ---------- Colors on the page ----------
+
+  // A label's color as #rrggbb if it's sized like a label and clearly
+  // colored, else null. Usually that's its background; for pale pastel pills
+  // with darker colored text it's the text color, and for outlined ones the
+  // border's.
+  function labelColor(el) {
+    const box = el.getBoundingClientRect();
+    if (!box.width || box.height > 48 || box.width > 240) return null;
+    const style = getComputedStyle(el);
+    const bg = parseColor(style.backgroundColor);
+    const fg = parseColor(style.color);
+    if (!bg || bg.a < 0.5) {
+      const border = parseColor(style.borderTopColor);
+      if (!border || parseFloat(style.borderTopWidth) < 1 || saturation(border) < 0.3 || !fg || saturation(fg) < 0.3) return null;
+      return toHex(fg);
+    }
+    if (saturation(bg) >= 0.25 && Math.max(bg.r, bg.g, bg.b) >= 40) return toHex(bg);
+    if (saturation(bg) >= 0.05 && fg && saturation(fg) >= 0.3) return toHex(fg);
+    return null;
+  }
+
+  // The color of the element a selector finds: its own label color, or that
+  // of the pill around it (the selector may point at the text inside), or
+  // failing that its text color if that's clearly colored.
+  function elementColor(selector) {
+    let el;
+    try { el = document.querySelector(selector); } catch { return null; }
+    return el ? colorOf(el) : null;
+  }
+
+  function colorOf(el) {
+    for (let e = el, up = 0; e && up < 3; e = e.parentElement, up++) {
+      const c = labelColor(e);
+      if (c) return c;
+    }
+    const fg = parseColor(getComputedStyle(el).color);
+    return fg && saturation(fg) >= 0.3 && Math.max(fg.r, fg.g, fg.b) >= 40 ? toHex(fg) : null;
+  }
+
+  function parseColor(css) {
+    const m = String(css).match(/[\d.]+/g);
+    if (!m || m.length < 3) return null;
+    const [r, g, b, a = 1] = m.map(Number);
+    return { r, g, b, a };
+  }
+  const saturation = ({ r, g, b }) => {
+    const max = Math.max(r, g, b);
+    return max ? (max - Math.min(r, g, b)) / max : 0;
+  };
+  const toHex = ({ r, g, b }) => "#" + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
 
   function contrastText(hex) {
     const n = parseInt(hex.slice(1), 16);
@@ -742,6 +801,6 @@ self.TR = (() => {
     uid, newLook, newVar, newCase, newRule, normalizeRule,
     normalizeHost, hostMatches, originFor, siteUrl, normalizePath, pathMatches, pathSpecificity, pathSegments,
     regexError, render, optionalNames, extract, transformValue, urlText, evaluate, resolveBadge, firstMatch, decorate, bestSelector, selectorOptions, elementKind,
-    readMeta, listMeta, labelValue, listLabels,
+    readMeta, listMeta, labelValue, listLabels, labelColor, elementColor, colorOf,
   };
 })();

@@ -1,9 +1,13 @@
 // Injected into a tab by the settings page. Highlights elements under the
-// mouse, works out a CSS selector for the one you click, and sends it back.
+// mouse, works out a CSS selector for the one you click, and sends it back
+// with its text and color.
 
 (() => {
   if (self.__tabRetitlerPicking) return;
   self.__tabRetitlerPicking = true;
+  // "color" when picking a label to color the icon from; set by the settings
+  // page just before injecting this.
+  const forColor = self.__tabRetitlerPickMode === "color";
 
   // Selector generation lives in shared.js, injected just before this file.
   const bestSelector = TR.bestSelector;
@@ -32,6 +36,8 @@
       }
       .sel { font-family: ui-monospace, "SF Mono", Menlo, monospace; color: #9db4ff; word-break: break-all; }
       .txt { color: #c9c9c4; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .col { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: #c9c9c4; }
+      .col i { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 0 1px rgb(255 255 255 / 0.3); }
       .bar {
         white-space: nowrap; max-width: calc(100vw - 24px);
         position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 2147483647;
@@ -60,16 +66,17 @@
       }
     </style>
     <div class="box"></div>
-    <div class="label"><div class="sel"></div><div class="txt"></div></div>
+    <div class="label"><div class="sel"></div><div class="txt"></div><div class="col"><i></i><span></span></div></div>
     <div class="bar">
       <span class="dot"></span>
-      <span><b>Click the element to read from</b></span>
+      <span><b></b></span>
       <span class="hint"><kbd>↑</kbd> <kbd>↓</kbd> wider or narrower · <kbd>Esc</kbd> cancel</span>
       <button type="button">Cancel</button>
     </div>`;
   const box = root.querySelector(".box");
   const label = root.querySelector(".label");
   const bar = root.querySelector(".bar");
+  bar.querySelector("b").textContent = forColor ? "Click the label to take the color from" : "Click the element to read from";
   document.documentElement.append(host);
 
   let hovered = null;   // element under the mouse
@@ -88,6 +95,11 @@
     const text = textOf(el);
     label.querySelector(".sel").textContent = bestSelector(el);
     label.querySelector(".txt").textContent = text ? `“${text.slice(0, 120)}”` : "No text";
+    const color = TR.colorOf(el);
+    const col = label.querySelector(".col");
+    col.style.display = forColor || color ? "flex" : "none";
+    col.querySelector("i").style.background = color || "transparent";
+    col.querySelector("span").textContent = color ? color : "No color here. Try ↑ for the label around it.";
     label.style.display = "block";
     const lh = label.offsetHeight;
     const below = r.bottom + 8 + lh < innerHeight;
@@ -172,7 +184,7 @@
   }
 
   function finish(el) {
-    const message = { type: "element-picked", selector: bestSelector(el), text: textOf(el).slice(0, 500) };
+    const message = { type: "element-picked", selector: bestSelector(el), text: textOf(el).slice(0, 500), color: TR.colorOf(el) };
     teardown();
     chrome.runtime.sendMessage(message).catch(() => {});
   }

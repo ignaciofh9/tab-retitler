@@ -49,6 +49,7 @@
     pageText: () => document.body?.innerText ?? "",
     meta: (key) => TR.readMeta(key),
     labelValue: (label) => TR.labelValue(label),
+    elementColor: (selector) => TR.elementColor(selector),
   };
 
   async function apply() {
@@ -119,6 +120,9 @@
       appliedRuleId: TR.firstMatch(list, ctx)?.ruleId ?? null,
       result: rule ? TR.evaluate(rule, ctx) : null,
       values: rule ? Object.fromEntries(rule.vars.map((v) => [v.id, TR.extract(v, ctx)])) : {},
+      // Colors of the labels the rule's icons take their color from.
+      colors: rule ? Object.fromEntries([rule.badge, ...rule.badgeSwitch.cases.map((c) => c.badge)]
+        .filter((l) => l.colorFrom).map((l) => [l.colorFrom, TR.elementColor(l.colorFrom)])) : {},
     };
   }
 
@@ -128,7 +132,19 @@
   const SKIP = new Set(["script", "style", "noscript", "template", "svg", "head", "title"]);
   const squash = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 
-  function harvest(want) {
+  // Elements the user picked on other pages, looked up here by selector:
+  // their text and color.
+  function picked(selectors = []) {
+    const out = [];
+    for (const selector of selectors) {
+      let el = null;
+      try { el = document.querySelector(selector); } catch {}
+      if (el) out.push({ selector, selectors: [selector], text: squash(el.textContent).slice(0, 200), color: TR.colorOf(el) });
+    }
+    return out;
+  }
+
+  function harvest(want, extra) {
     // Case-insensitive, so "Sothe" also finds an element saying "SOTHE".
     const words = [...new Set((want.toLowerCase().match(/[a-z0-9]{2,}|\d/g) || []))];
     const elements = [];
@@ -155,6 +171,7 @@
       styled: styledLabels(),
       meta: TR.listMeta(),
       labels: TR.listLabels(),
+      picked: picked(extra),
     };
   }
 
@@ -176,7 +193,7 @@
         if (SKIP.has(el.localName)) break;
         const text = squash(el.textContent);
         if (!text || text.length > 24) break;
-        const color = colorfulBackground(el);
+        const color = TR.labelColor(el);
         if (!color) continue;
         const key = `${TR.elementKind(el)}|${color}`;
         const known = byKey.get(key);
@@ -195,48 +212,18 @@
     return list;
   }
 
-  // The label's color as #rrggbb if it's sized like a label and clearly
-  // colored, else null. Usually that's its background; for pale pastel pills
-  // with darker colored text, it's the text color.
-  function colorfulBackground(el) {
-    const box = el.getBoundingClientRect();
-    if (!box.width || box.height > 48 || box.width > 240) return null;
-    const style = getComputedStyle(el);
-    const bg = parseColor(style.backgroundColor);
-    if (!bg || bg.a < 0.5) return colorfulOutline(el);
-    if (saturation(bg) >= 0.25 && Math.max(bg.r, bg.g, bg.b) >= 40) return hex(bg);
-    const fg = parseColor(style.color);
-    if (saturation(bg) >= 0.05 && fg && saturation(fg) >= 0.3) return hex(fg);
-    return null;
-  }
-
-  // Outline-only labels: no background, but a colored border and text.
-  function colorfulOutline(el) {
-    const style = getComputedStyle(el);
-    const border = parseColor(style.borderTopColor);
-    const fg = parseColor(style.color);
-    if (!border || parseFloat(style.borderTopWidth) < 1 || saturation(border) < 0.3 || !fg || saturation(fg) < 0.3) return null;
-    return hex(fg);
-  }
-
-  function parseColor(css) {
-    const m = css.match(/[\d.]+/g);
-    if (!m || m.length < 3) return null;
-    const [r, g, b, a = 1] = m.map(Number);
-    return { r, g, b, a };
-  }
-  const saturation = ({ r, g, b }) => {
-    const max = Math.max(r, g, b);
-    return max ? (max - Math.min(r, g, b)) / max : 0;
-  };
-  const hex = ({ r, g, b }) => "#" + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
-
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (msg.type === "harvest") return sendResponse(harvest(msg.want || ""));
+    if (msg.type === "harvest") return sendResponse(harvest(msg.want || "", msg.extra));
+    if (msg.type === "picked") return sendResponse(picked(msg.selectors));
     // What each candidate source gives on this page, to find where the
     // possible rules disagree.
     if (msg.type === "probe") {
-      return sendResponse({ url: location.href, title: original.title, values: msg.sources.map((s) => TR.extract(s, ctx)) });
+      return sendResponse({
+        url: location.href,
+        title: original.title,
+        values: msg.sources.map((s) => TR.extract(s, ctx)),
+        colors: (msg.colors ?? []).map((sel) => TR.elementColor(sel)),
+      });
     }
     if (msg.type !== "inspect") return;
     inspect(msg.rule).then(sendResponse);

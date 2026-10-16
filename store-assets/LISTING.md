@@ -25,7 +25,7 @@ Tab Retitler renames tabs and changes their icons based on each page's URL and c
 
 Type the title you want for a tab, like "4521 · Garden tools" instead of "Shop – Product page", and it works out the rule. Give it a few more tabs from the same site and it finds a rule that fits all of them. It can also change case and turn URL slugs like "fix-login-redirect" into "Fix login redirect".
 
-Icons can get a dot, a short text badge, an outline or a tint. They can follow the page too: green when a task says Done, blue when it says In Review.
+Icons can get a dot, a short text badge, an outline or a tint. They can follow the page too: pick a status label and the icon takes its color on every tab.
 
 You edit rules in the side panel, and the tab updates as you type. You can pick page text with the mouse, turn rules on and off, and share them as a short code or a JSON file.
 

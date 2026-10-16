@@ -197,5 +197,104 @@ scopes("value read from a plain word in the path", [
   { ...page("https://shop.example.com/category/chairs", "Shop"), want: "Chairs" },
 ], ["/category/*", "/category/**", ""], [], ["https://shop.example.com/category/desks"]);
 
+// ---------- Icons ----------
+
+// The icon a taught rule gives a page, through the real rule engine, the way
+// the panel saves it: title values, plus the ones the icon needs.
+function iconOn(r, lf, p) {
+  const vars = [...r.vars, ...(lf.textVars ?? []), ...(lf.newVar ? [lf.newVar] : [])].map((v) => ({ ...TR.newVar(), ...v }));
+  const rule = TR.normalizeRule({
+    host: r.host, title: r.title, vars,
+    badge: lf.mode === "always" ? lf.look : TR.newLook(),
+    badgeSwitch: lf.mode === "switch"
+      ? { enabled: true, on: lf.on, cases: lf.cases.map((c) => ({ ...TR.newCase(), value: c.value, badge: c.look })) }
+      : { enabled: false, on: "", cases: [] },
+  });
+  const all = [...p.elements, ...p.styled, ...(p.picked ?? [])];
+  const find = (s) => all.find((e) => e.selector === s || e.selectors?.includes(s));
+  const res = TR.evaluate(rule, {
+    url: p.url, title: p.title,
+    elementText: (s) => find(s)?.text ?? null,
+    pageText: () => "",
+    meta: (k) => p.meta[k] ?? null,
+    labelValue: (l) => p.labels.find((x) => x.label.toLowerCase() === l.toLowerCase())?.value ?? null,
+    elementColor: (s) => find(s)?.color ?? null,
+  });
+  return res.matched ? res.badge : "(no match)";
+}
+
+function iconTest(name, examples, heldOut, extra) {
+  console.log(`• ${name}`);
+  const r = Infer.fit(examples);
+  const lf = Infer.fitLook(examples, r);
+  check(lf && lf.mode !== "unknown", "learns an icon", JSON.stringify(lf));
+  if (!lf || lf.mode === "unknown") return;
+  for (const [i, ex] of examples.entries()) {
+    const seen = (l) => l && JSON.stringify({
+      style: l.style, text: l.text, color: l.style !== "none" && l.color,
+      outline: l.outline, outlineColor: l.outline !== "none" && l.outlineColor,
+    });
+    const got = seen(iconOn(r, lf, ex));
+    check(got === seen(TR.resolveBadge(ex.look, {})), `example ${i + 1} gets its icon`, `got ${got}`);
+  }
+  for (const [p, want] of heldOut) {
+    const got = iconOn(r, lf, p);
+    const ok = Object.entries(want).every(([k, v]) => got?.[k] === v);
+    check(ok, `new page gets ${JSON.stringify(want)}`, `got ${JSON.stringify(got && { style: got.style, color: got.color, text: got.text })} from ${JSON.stringify(lf)}`);
+  }
+  extra?.(lf, r);
+}
+
+const pill = (text, color, selector = ".status-pill") => ({ text, selector, selectors: [selector], color, more: [] });
+const dot = (color) => TR.newLook({ style: "dot", color });
+const RED = "#d93f0b", GREEN = "#1f883d", BLUE = "#0969da";
+
+iconTest("one icon for every tab", [
+  { ...page("https://track.example.com/browse/ABC-12", "Fix login"), want: "Fix login", look: dot(TR.COLORS[4]) },
+  { ...page("https://track.example.com/browse/ABC-13", "Add tests"), want: "Add tests", look: dot(TR.COLORS[4]) },
+], [[page("https://track.example.com/browse/ABC-14", "Docs"), { style: "dot", color: TR.COLORS[4] }]],
+(lf) => check(lf.mode === "always" && !lf.colorFrom, "always, with a fixed color"));
+
+iconTest("own colors per status switch on the status", [
+  { ...page("https://track.example.com/browse/ABC-12", "Fix login", { styled: [pill("Done", GREEN)] }), want: "Fix login", look: dot(TR.COLORS[0]) },
+  { ...page("https://track.example.com/browse/ABC-13", "Add tests", { styled: [pill("In Review", BLUE)] }), want: "Add tests", look: dot(TR.COLORS[2]) },
+], [[page("https://track.example.com/browse/ABC-14", "Docs", { styled: [pill("Done", GREEN)] }), { color: TR.COLORS[0] }]],
+(lf) => check(lf.mode === "switch" && !lf.colorFrom, "a switch, not page colors", JSON.stringify(lf)));
+
+iconTest("color taken from a label the user chose", [
+  { ...page("https://track.example.com/browse/ABC-12", "Fix login", { styled: [pill("In Review", BLUE)] }), want: "Fix login", look: dot(BLUE), hint: ".status-pill" },
+], [
+  [page("https://track.example.com/browse/ABC-14", "Docs", { styled: [pill("Blocked", RED)] }), { style: "dot", color: RED }],
+  [page("https://track.example.com/browse/ABC-15", "No label"), { style: "dot", color: TR.COLORS[7] }],
+], (lf) => check(lf.mode === "always" && lf.colorFrom?.selector === ".status-pill", "follows the label's color", JSON.stringify(lf)));
+
+iconTest("colors that follow a label across tabs, without choosing it", [
+  { ...page("https://track.example.com/browse/ABC-12", "Fix login", { styled: [pill("Done", GREEN)] }), want: "Fix login", look: dot(GREEN) },
+  { ...page("https://track.example.com/browse/ABC-13", "Add tests", { styled: [pill("In Review", BLUE)] }), want: "Add tests", look: dot(BLUE) },
+], [[page("https://track.example.com/browse/ABC-14", "Docs", { styled: [pill("Blocked", RED)] }), { color: RED }]],
+(lf) => check(lf.mode === "always" && !!lf.colorFrom, "one look with page colors", JSON.stringify(lf)));
+
+iconTest("picked element's color, outline only", [
+  { ...page("https://track.example.com/browse/ABC-12", "Fix login", { picked: [pill("P1", RED, "#priority")] }), want: "Fix login",
+    look: TR.newLook({ outline: "thin", outlineColor: RED }), hint: "#priority" },
+], [[page("https://track.example.com/browse/ABC-14", "Docs", { picked: [pill("P3", BLUE, "#priority")] }), { outline: "thin", outlineColor: BLUE }]]);
+
+iconTest("badge text read from the URL", [
+  { ...page("https://track.example.com/browse/ABC-12", "Fix login"), want: "Fix login", look: TR.newLook({ style: "text", text: "12" }) },
+  { ...page("https://track.example.com/browse/ABC-7", "Add tests"), want: "Add tests", look: TR.newLook({ style: "text", text: "7" }) },
+], [[page("https://track.example.com/browse/ABC-99", "Docs"), { style: "text", text: "99" }]],
+(lf) => check(lf.mode === "always" && /^\{\w+\}$/.test(lf.look.text) && lf.textVars.length === 1, "a template with one new value", JSON.stringify(lf)));
+
+iconTest("badge text the title also uses keeps its name", [
+  { ...page("https://track.example.com/browse/ABC-12", "Fix login"), want: "12 Fix login", look: TR.newLook({ style: "text", text: "12" }) },
+  { ...page("https://track.example.com/browse/ABC-7", "Add tests"), want: "7 Add tests", look: TR.newLook({ style: "text", text: "7" }) },
+], [[page("https://track.example.com/browse/ABC-99", "Docs"), { text: "99" }]],
+(lf, r) => check(!lf.textVars.length && r.vars.some((v) => `{${v.name}}` === lf.look.text), "reuses the title's value", JSON.stringify(lf)));
+
+iconTest("badge text and color both from the page", [
+  { ...page("https://track.example.com/browse/ABC-12", "Fix login", { styled: [pill("P1", RED, ".prio")] }), want: "Fix login", look: TR.newLook({ style: "text", text: "P1", color: RED }) },
+  { ...page("https://track.example.com/browse/ABC-13", "Add tests", { styled: [pill("P2", BLUE, ".prio")] }), want: "Add tests", look: TR.newLook({ style: "text", text: "P2", color: BLUE }) },
+], [[page("https://track.example.com/browse/ABC-14", "Docs", { styled: [pill("P3", GREEN, ".prio")] }), { text: "P3", color: GREEN }]]);
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

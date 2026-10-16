@@ -340,6 +340,10 @@ self.Infer = (() => {
   // The texts a page offers, each with the ids that find it again on another
   // page (selectors for elements, the key for metadata, the label for labels).
   const fieldCache = new WeakMap();
+  // Elements read from a page: ones whose text matched the wanted title,
+  // colored labels, and ones the user picked.
+  const pageElements = (ex) => [...(ex.elements ?? []), ...(ex.styled ?? []), ...(ex.picked ?? [])];
+
   function fields(ex) {
     if (fieldCache.has(ex)) return fieldCache.get(ex);
     const out = [
@@ -347,7 +351,7 @@ self.Infer = (() => {
       { from: "title", ids: [""], text: ex.title, penalty: 0.5 },
     ];
     const seen = new Set();
-    for (const e of [...ex.elements, ...(ex.styled ?? [])]) {
+    for (const e of pageElements(ex)) {
       const ids = e.selectors?.length ? e.selectors : [e.selector];
       if (seen.has(ids[0])) continue;
       seen.add(ids[0]);
@@ -374,7 +378,7 @@ self.Infer = (() => {
   }
 
   function elementText(ex, selector) {
-    for (const e of [...ex.elements, ...(ex.styled ?? [])]) {
+    for (const e of pageElements(ex)) {
       if (e.selector === selector || e.selectors?.includes(selector)) return e.text;
     }
     return null;
@@ -480,7 +484,7 @@ self.Infer = (() => {
         url: ex.url,
         title: ex.title,
         elementText: (sel) => elementText(ex, sel),
-        pageText: () => [...ex.elements, ...(ex.styled ?? [])].map((e) => e.text).join("\n"),
+        pageText: () => pageElements(ex).map((e) => e.text).join("\n"),
         meta: (key) => ex.meta?.[key] ?? null,
         labelValue: (label) => labelText(ex, label),
       });
@@ -1069,10 +1073,14 @@ self.Infer = (() => {
 
   // ---------- Icons ----------
   //
-  // Examples can also say what icon their tab should get (ex.look). If they
-  // all agree, that's the icon for every tab. If not, find something on the
-  // pages that explains the difference, like a status label, and switch the
-  // icon on it.
+  // Examples can also say what icon their tab should get (ex.look). Before
+  // comparing them, two things that change from tab to tab are generalized:
+  // badge text read from the page like the title is ("42" here and "43"
+  // there is {num}), and colors that are a label's color on each page (the
+  // badge takes that label's color wherever it is). If the icons then all
+  // agree, that's the icon for every tab. If not, find something on the pages
+  // that explains the difference, like a status label, and switch the icon
+  // on it.
 
   const lookKey = (look) => JSON.stringify(TR.newLook(look));
 
@@ -1082,15 +1090,34 @@ self.Infer = (() => {
   //     on is the value the icon depends on; newVar is set when that value
   //     isn't in the title and has to be added to the rule.
   //   { mode: "unknown" } when nothing on the pages explains the difference
+  // "always" and "switch" also have
+  //   textVars  - values the badge text uses that the title doesn't
+  //   colorFrom - { selector, text } when colors come from a label
   function fitLook(examples, titleFit) {
     const taught = examples.filter((ex) => ex.look);
     if (!taught.length) return null;
-    const looks = new Set(taught.map((ex) => lookKey(ex.look)));
-    if (looks.size === 1) return { mode: "always", look: TR.newLook(taught[0].look) };
+    let looks = taught.map((ex) => TR.newLook({ ...ex.look, colorFrom: "" }));
+
+    const text = fitBadgeText(taught, looks, titleFit);
+    if (text) looks = looks.map((l) => ({ ...l, text: text.template }));
+    const page = fitPageColor(taught, looks);
+    if (page) {
+      looks = looks.map((l) => TR.newLook({
+        ...l,
+        colorFrom: page.selector,
+        // Where the label isn't on a page: gray, rather than one tab's color.
+        color: GRAY, outlineColor: GRAY, tintColor: GRAY,
+      }));
+    }
+    const extras = { textVars: text?.vars ?? [], colorFrom: page ? { selector: page.selector, text: page.text } : null };
+
+    const keys = looks.map(lookKey);
+    const distinct = new Set(keys);
+    if (distinct.size === 1) return { mode: "always", look: looks[0], ...extras };
 
     // What could explain it: values already in the title, and elements,
-    // labels and metadata on every taught page. Elements the user picked a
-    // suggestion from (ex.hint) and colored labels are the likeliest.
+    // labels and metadata on every taught page. Elements the user picked or
+    // took a suggestion from (ex.hint) and colored labels are the likeliest.
     const candidates = [];
     for (const p of titleFit?.parts ?? []) {
       if (p.lit === undefined && p.source.from !== "builtin") candidates.push({ name: p.name, source: p.source, cost: 0.5 });
@@ -1115,15 +1142,14 @@ self.Infer = (() => {
       let consistent = true;
       values.forEach((v, i) => {
         const k = v.toLowerCase();
-        const look = lookKey(taught[i].look);
-        if (lookFor.has(k) && lookFor.get(k) !== look) consistent = false;
-        lookFor.set(k, look);
+        if (lookFor.has(k) && lookFor.get(k) !== keys[i]) consistent = false;
+        lookFor.set(k, keys[i]);
       });
       if (!consistent) continue;
       // A value different on every page while some pages share an icon (an
       // id, a title) would only memorize the examples, not explain them.
-      if (lookFor.size === taught.length && looks.size < taught.length) continue;
-      const score = c.cost + 0.5 * (lookFor.size - looks.size)
+      if (lookFor.size === taught.length && distinct.size < taught.length) continue;
+      const score = c.cost + 0.5 * (lookFor.size - distinct.size)
         + (values.every((v) => /^\d+$/.test(v)) ? 1.5 : 0)
         + (values.some((v) => v.split(" ").length > 3) ? 1 : 0);
       if (!best || score < best.score) best = { ...c, values, score };
@@ -1132,17 +1158,89 @@ self.Infer = (() => {
 
     const cases = [];
     best.values.forEach((value, i) => {
-      if (!cases.some((c) => c.value.toLowerCase() === value.toLowerCase())) cases.push({ value, look: TR.newLook(taught[i].look) });
+      if (!cases.some((c) => c.value.toLowerCase() === value.toLowerCase())) cases.push({ value, look: looks[i] });
     });
-    if (best.name) return { mode: "switch", on: best.name, newVar: null, cases };
-    const used = new Set((titleFit?.parts ?? []).map((p) => p.name).filter(Boolean));
+    if (best.name) return { mode: "switch", on: best.name, newVar: null, cases, ...extras };
+    const used = new Set([...(titleFit?.parts ?? []).map((p) => p.name), ...extras.textVars.map((v) => v.name)].filter(Boolean));
     const name = nameFor({ piece: best.values[0], source: best.source, options: [] }, used);
     return {
       mode: "switch",
       on: name,
       newVar: { name, from: best.source.from, selector: best.source.selector, regex: "", required: false },
       cases,
+      ...extras,
     };
+  }
+
+  const GRAY = TR.COLORS[7];
+
+  // Text badges whose text differs between tabs: learned like a title, as a
+  // template with values from the page. Values the title already reads keep
+  // its names; the rest are new values for the rule (textVars), never
+  // required. null when the text is the same everywhere or can't be read
+  // from the pages.
+  function fitBadgeText(taught, looks, titleFit) {
+    if (!looks.every((l) => l.style === "text" && l.text.trim())) return null;
+    if (new Set(looks.map((l) => l.text)).size === 1) return null;
+    const f = fit(taught.map((ex, i) => ({ ...ex, want: looks[i].text })), { noSplit: true });
+    if (!f?.count || !f.results.every((r) => r.ok)) return null;
+    const titleParts = (titleFit?.parts ?? []).filter((p) => p.lit === undefined && p.name);
+    const used = new Set(titleParts.map((p) => p.name));
+    const rename = new Map();
+    const vars = [];
+    for (const p of f.parts) {
+      if (p.lit !== undefined || p.source.from === "builtin") continue;
+      const same = titleParts.find((t) => t.source.from !== "builtin" && sourceKey(t.source) === sourceKey(p.source));
+      if (same) {
+        rename.set(p, same.name);
+        continue;
+      }
+      let name = p.name;
+      for (let i = 2; used.has(name); i++) name = `${p.name}${i}`;
+      used.add(name);
+      rename.set(p, name);
+      const v = f.vars.find((x) => x.name === p.name);
+      vars.push({ ...v, name, required: false });
+    }
+    return { template: templateOf(f.parts, (p) => rename.get(p) ?? p.name), vars };
+  }
+
+  // The colors a look actually uses.
+  function colorsOf(l) {
+    const out = [];
+    if (l.style !== "none") out.push(l.color);
+    if (l.outline !== "none") out.push(l.outlineColor);
+    if (l.tint === "color") out.push(l.tintColor);
+    return out.map((c) => c.toLowerCase());
+  }
+
+  // An element's color on an example's page, from the colored labels found
+  // there or the elements the user picked.
+  function colorAt(ex, selector) {
+    for (const e of [...(ex.picked ?? []), ...(ex.styled ?? [])]) {
+      if ((e.selector === selector || e.selectors?.includes(selector)) && e.color) return { color: e.color.toLowerCase(), text: e.text };
+    }
+    return null;
+  }
+
+  // A label whose color on every page is the color its icon uses. Taken
+  // when the user pointed at that label (a suggestion or a pick), or when the
+  // colors differ between pages and the label's follow along: then the icon
+  // should follow the label on pages it hasn't seen too.
+  function fitPageColor(taught, looks) {
+    const used = looks.map(colorsOf);
+    if (used.some((c) => !c.length || new Set(c).size > 1)) return null;
+    const varies = new Set(used.map((c) => c[0])).size > 1;
+    const hints = taught.map((ex) => ex.hint).filter(Boolean);
+    const options = [...new Set([
+      ...hints,
+      ...(varies ? [...(taught[0].picked ?? []), ...(taught[0].styled ?? [])].flatMap((e) => e.selectors ?? [e.selector]) : []),
+    ])];
+    for (const selector of options) {
+      const at = taught.map((ex) => colorAt(ex, selector));
+      if (at.every((a, i) => a && a.color === used[i][0])) return { selector, text: at[0].text };
+    }
+    return null;
   }
 
   return { fit, fitLook, run, variants, renderVariant, sourceKey, tokens, patterns, structured };

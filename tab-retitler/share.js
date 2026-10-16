@@ -11,9 +11,10 @@
 self.Share = (() => {
   const PREFIX = "TR2:";
   // 2 added metadata and label sources and the newer value changes (pick,
-  // leading zeros, length limit, lookups); 3 added page scopes ("/products/*").
-  // Older codes still import.
-  const FORMAT = 3;
+  // leading zeros, length limit, lookups); 3 added page scopes ("/products/*");
+  // 4 added icon colors taken from a label on the page. Older codes still
+  // import.
+  const FORMAT = 4;
   const MAX_PAYLOAD = 1 << 20; // refuse anything that inflates past 1 MB
 
   const FROM = ["url", "title", "element", "page"]; // format 1's sources
@@ -106,18 +107,20 @@ self.Share = (() => {
       l.shape !== d.shape || l.position !== d.position || l.size !== d.size,
       l.outline !== d.outline || l.outlineColor !== d.outlineColor,
       l.tint !== d.tint || l.tintColor !== d.tintColor || l.tintAmount !== d.tintAmount,
+      !!l.colorFrom,
     ];
     w.uint(parts.reduce((mask, on, i) => mask | (on ? 1 << i : 0), 0));
     if (parts[0]) { w.uint(index(STYLES, l.style)); w.color(l.color); w.str(l.text); }
     if (parts[1]) w.uint(index(SHAPES, l.shape) | (index(POSITIONS, l.position) << 2) | (index(SIZES, l.size) << 4));
     if (parts[2]) { w.uint(index(OUTLINES, l.outline)); w.color(l.outlineColor); }
     if (parts[3]) { w.uint(index(TINTS, l.tint)); w.color(l.tintColor); w.uint(Math.min(100, l.tintAmount)); }
+    if (parts[4]) w.str(l.colorFrom);
   }
 
-  function readLook(r) {
+  function readLook(r, format) {
     const l = TR.newLook();
     const mask = r.uint();
-    if (mask > 15) throw new Error("bad icon");
+    if (mask > (format >= 4 ? 31 : 15)) throw new Error("bad icon");
     if (mask & 1) { l.style = r.choice(STYLES); l.color = r.color(); l.text = r.str(); }
     if (mask & 2) {
       const n = r.uint();
@@ -127,6 +130,7 @@ self.Share = (() => {
     }
     if (mask & 4) { l.outline = r.choice(OUTLINES); l.outlineColor = r.color(); }
     if (mask & 8) { l.tint = r.choice(TINTS); l.tintColor = r.color(); l.tintAmount = Math.min(100, r.uint()); }
+    if (mask & 16) l.colorFrom = r.str();
     return l;
   }
 
@@ -175,12 +179,12 @@ self.Share = (() => {
     rule.path = flags & 16 ? r.str() : "";
     rule.vars = [];
     for (let n = r.uint(); n > 0; n--) rule.vars.push(format === 1 ? readVar1(r) : readVar2(r));
-    rule.badge = readLook(r);
+    rule.badge = readLook(r, format);
     rule.badgeSwitch = { enabled: !!(flags & 8), on: "", cases: [] };
     if (flags & 4) {
       rule.badgeSwitch.on = r.str();
       for (let n = r.uint(); n > 0; n--) {
-        rule.badgeSwitch.cases.push({ op: r.choice(OPS), value: r.str(), badge: readLook(r) });
+        rule.badgeSwitch.cases.push({ op: r.choice(OPS), value: r.str(), badge: readLook(r, format) });
       }
     }
     return rule;
@@ -289,6 +293,7 @@ self.Share = (() => {
         outline: pick(OUTLINES, x.outline), outlineColor: isHex(x.outlineColor) ? x.outlineColor.toLowerCase() : d.outlineColor,
         tint: pick(TINTS, x.tint), tintColor: isHex(x.tintColor) ? x.tintColor.toLowerCase() : d.tintColor,
         tintAmount: Number.isFinite(x.tintAmount) ? Math.min(100, Math.max(0, x.tintAmount)) : d.tintAmount,
+        colorFrom: str(x.colorFrom, 500),
       };
     };
     const sw = r.badgeSwitch && typeof r.badgeSwitch === "object" ? r.badgeSwitch : {};

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tab Retitler",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Rename tabs and badge their icons using rules based on each page’s URL and content. Teach it by example in the side panel.",
   "homepage_url": "https://github.com/ignaciofh9/tab-retitler",
   "minimum_chrome_version": "116",

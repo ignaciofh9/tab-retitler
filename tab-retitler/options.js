@@ -28,7 +28,7 @@ let selectedId = null;
 let refs = {};               // elements in the open editor, by data-ref
 const rowRefs = new Map();   // value id -> elements in its row
 const caseRefs = new Map();  // badge case id -> elements in its row
-let picking = null;          // { ruleId, varId } while the picker is open in a tab
+let picking = null;          // { key, onPicked } while the picker is open in a tab
 let IS_PANEL = false;
 let live = null;             // what the side panel knows about the current tab, see refreshLive()
 
@@ -499,8 +499,8 @@ function varRow(rule, v) {
   renderMapRows(v, row);
   row.pick = $("[data-action=pick]", root);
   row.pick.addEventListener("click", () => startPick(rule, v));
-  row.pick.classList.toggle("active", picking?.varId === v.id);
-  $("span", row.pick).textContent = picking?.varId === v.id ? "Picking…" : "Pick";
+  row.pick.classList.toggle("active", picking?.key === v.id);
+  $("span", row.pick).textContent = picking?.key === v.id ? "Picking…" : "Pick";
   $("[data-action=remove-var]", root).addEventListener("click", () => {
     rule.vars.splice(rule.vars.indexOf(v), 1);
     renderVars();
@@ -578,23 +578,53 @@ function addVar() {
 // ---------- Picking an element on the page ----------
 
 async function startPick(rule, v) {
+  pickOnSite(rule, v.id, "element", (msg) => {
+    const r = rules.find((o) => o.id === rule.id);
+    const target = r?.vars.find((o) => o.id === v.id);
+    if (!target) return;
+    target.selector = msg.selector;
+    if (selectedId !== r.id) {
+      select(r.id);
+      save();
+    } else {
+      rowRefs.get(target.id).inputs.selector.value = target.selector;
+      changed("vars");
+    }
+    const input = rowRefs.get(target.id).inputs.selector;
+    input.classList.remove("flash");
+    void input.offsetWidth; // restart the animation
+    input.classList.add("flash");
+    toast(msg.text ? `Picked “${clip(msg.text, 40)}”` : "Picked an element with no text.");
+  });
+}
+
+const clip = (text, n) => (text.length > n ? text.slice(0, n) + "…" : text);
+
+// Opens the picker on a tab of the rule's site (asking for access first) and
+// calls onPicked with { selector, text, color } when an element is clicked.
+// key marks which Pick button shows "Picking…"; mode "color" asks for a
+// label to take a color from.
+async function pickOnSite(rule, key, mode, onPicked) {
   if (!chrome.tabs) return toast("Picking only works when this page runs inside the extension.");
   if (!rule.host) return toast("Choose a site for this rule first.");
   if (!(await requestAccess(rule.host))) return;
   updateAccess();
   refreshListItem(rule);
-
-  setPicking({ ruleId: rule.id, varId: v.id });
   try {
-    const tab = await findOrOpenTab(rule);
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["shared.js", "picker.js"] });
-    await chrome.tabs.update(tab.id, { active: true });
-    await chrome.windows.update(tab.windowId, { focused: true });
+    await pickOnTab(await findOrOpenTab(rule), key, mode, onPicked);
   } catch (err) {
     console.warn("Tab Retitler: could not start picker", err);
     setPicking(null);
     toast("Couldn't open the picker on that tab. Try reloading the tab.");
   }
+}
+
+async function pickOnTab(tab, key, mode, onPicked) {
+  setPicking({ key, onPicked });
+  await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: (m) => { self.__tabRetitlerPickMode = m; }, args: [mode] });
+  await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["shared.js", "picker.js"] });
+  await chrome.tabs.update(tab.id, { active: true });
+  await chrome.windows.update(tab.windowId, { focused: true });
 }
 
 // Prefer the tab you're looking at, then another open tab on the site (one
@@ -623,34 +653,20 @@ async function findOrOpenTab(rule) {
 function setPicking(state) {
   picking = state;
   for (const [id, row] of rowRefs) {
-    row.pick.classList.toggle("active", picking?.varId === id);
-    $("span", row.pick).textContent = picking?.varId === id ? "Picking…" : "Pick";
+    row.pick.classList.toggle("active", picking?.key === id);
+    $("span", row.pick).textContent = picking?.key === id ? "Picking…" : "Pick";
   }
+  for (const b of $$("[data-pick-key]")) b.classList.toggle("active", picking?.key === b.dataset.pickKey);
+  const teachPick = $(".suggest-chip.pick .suggest-text");
+  if (teachPick) teachPick.textContent = picking?.key === "teach-pick" ? "Picking…" : "Pick on page";
 }
 
 chrome.runtime.onMessage?.addListener((msg) => {
   if (!picking || (msg.type !== "element-picked" && msg.type !== "element-pick-cancelled")) return;
-  const { ruleId, varId } = picking;
+  const { onPicked } = picking;
   setPicking(null);
   focusThisTab();
-
-  const rule = rules.find((r) => r.id === ruleId);
-  const v = rule?.vars.find((o) => o.id === varId);
-  if (msg.type !== "element-picked" || !v) return;
-
-  v.selector = msg.selector;
-  if (selectedId !== ruleId) {
-    select(ruleId);
-    save();
-  } else {
-    rowRefs.get(v.id).inputs.selector.value = v.selector;
-    changed("vars");
-  }
-  const input = rowRefs.get(v.id).inputs.selector;
-  input.classList.remove("flash");
-  void input.offsetWidth; // restart the animation
-  input.classList.add("flash");
-  toast(msg.text ? `Picked “${msg.text.slice(0, 40)}${msg.text.length > 40 ? "…" : ""}”` : "Picked an element with no text.");
+  if (msg.type === "element-picked") onPicked(msg);
 });
 
 async function focusThisTab() {
@@ -733,7 +749,7 @@ function renderBadgeCard() {
   });
   $("[data-action=add-case]", refs["badge-switch"]).addEventListener("click", () => addCase(true));
 
-  refs["badge-default"].replaceChildren(badgeEditor(rule.badge, () => changed("badge")));
+  refs["badge-default"].replaceChildren(badgeEditor(rule.badge, () => changed("badge"), { pickColor: (key, done) => pickOnSite(rule, key, "color", done) }));
   renderCases();
 }
 
@@ -768,7 +784,7 @@ function caseRow(rule, c, index) {
     renderCases();
     changed("badge.case");
   });
-  $("[data-ref=editor]", root).replaceChildren(badgeEditor(c.badge, () => changed("badge")));
+  $("[data-ref=editor]", root).replaceChildren(badgeEditor(c.badge, () => changed("badge"), { pickColor: (key, done) => pickOnSite(rule, key, "color", done) }));
   caseRefs.set(c.id, row);
   return root;
 }
@@ -823,9 +839,11 @@ function syncBadge() {
 
 // Controls for one icon look: badge style, color and text up front, with
 // shape, corner, size, outline and tint under "Shape & effects". Used for the
-// always-on look, the fallback, and each switch case.
-function badgeEditor(look, onChange) {
+// always-on look, the fallback, and each switch case. With opts.pickColor
+// (key, onPicked), its colors can also come from a label on the page.
+function badgeEditor(look, onChange, opts = {}) {
   const el = $("#badge-editor-tpl").content.cloneNode(true).firstElementChild;
+  const pickKey = `color:${TR.uid()}`;
   const text = $(".badge-text", el);
   const more = $(".be-more", el);
   const advanced = $(".be-advanced", el);
@@ -853,13 +871,35 @@ function badgeEditor(look, onChange) {
     syncs.push(() => buttons.forEach((b) => b.setAttribute("aria-checked", b.dataset.value === look[key])));
   }
 
+  // Picking a label sets where the color comes from. Its color right now
+  // becomes the fixed color too, so previews without the page look right.
+  const pickColor = opts.pickColor && (() => opts.pickColor(pickKey, (msg) => {
+    if (!msg.color) return toast("That has no color of its own. Pick the colored label, or press ↑ while picking to choose the box around the text.");
+    look.colorFrom = msg.selector;
+    look.color = look.outlineColor = look.tintColor = msg.color;
+    update();
+    toast(`Colored like “${clip(msg.text || msg.selector, 40)}” on each page.`);
+  }));
+
   for (const box of $$("[data-be-colors]", el)) {
     const key = box.dataset.beColors;
     syncs.push(swatchRow(box, () => look[key], (color) => {
       look[key] = color;
       update();
-    }));
+    }, pickColor && { on: () => !!look.colorFrom, pick: pickColor, key: pickKey }));
   }
+
+  const page = $(".be-page", el);
+  $(".be-page-again", el).dataset.pickKey = pickKey;
+  $(".be-page-again", el).addEventListener("click", () => pickColor?.());
+  $(".be-page-off", el).addEventListener("click", () => {
+    look.colorFrom = "";
+    update();
+  });
+  syncs.push(() => {
+    page.hidden = !look.colorFrom;
+    $("code", page).textContent = look.colorFrom;
+  });
 
   text.value = look.text;
   text.addEventListener("input", () => {
@@ -910,9 +950,10 @@ function lookSummary(look) {
   return parts.join(" · ");
 }
 
-// Preset color dots plus a custom color picker. Returns a function that
-// updates which one is marked as chosen.
-function swatchRow(box, get, set) {
+// Preset color dots plus a custom color picker, and optionally a button to
+// take the color from the page (page: { on(), pick(), key }). Returns a
+// function that updates which one is marked as chosen.
+function swatchRow(box, get, set, page) {
   const presets = TR.COLORS.map((color) => {
     const b = document.createElement("button");
     b.type = "button";
@@ -931,9 +972,21 @@ function swatchRow(box, get, set) {
   const picker = $("input", custom);
   picker.value = get();
   picker.addEventListener("input", () => set(picker.value));
-  box.replaceChildren(...presets, custom);
+  const fromPage = page && Object.assign(document.createElement("button"), {
+    type: "button",
+    className: "swatch page",
+    title: "Use a label's color from each page",
+    innerHTML: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 2.5l3 3-1.5 1.5-.8-.8-5.7 5.7H3.5v-2l5.7-5.7-.8-.8z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>',
+  });
+  if (fromPage) {
+    fromPage.setAttribute("aria-label", "Color from the page");
+    fromPage.dataset.pickKey = page.key;
+    fromPage.addEventListener("click", page.pick);
+  }
+  box.replaceChildren(...presets, custom, ...(fromPage ? [fromPage] : []));
 
   return () => {
+    fromPage?.setAttribute("aria-pressed", page.on());
     const color = get().toLowerCase();
     const isPreset = TR.COLORS.includes(color);
     for (const s of presets) s.setAttribute("aria-checked", s.dataset.color === color);
@@ -1158,16 +1211,18 @@ function updateLive() {
   // Badge cases: a small icon of each, and which one this tab uses.
   const hit = res?.matched && onRuleSite;
   const vars = hit ? res.vars : {};
+  // Icons that take their color from a label show this tab's color.
+  const page = hit ? { elementColor: (selector) => info.colors?.[selector] ?? null } : null;
   const pageUrl = onRuleSite ? live.tab.url : rule.host ? TR.siteUrl(rule.host) : "";
   const sw = rule.badgeSwitch;
   for (const c of sw.cases) {
     const row = caseRefs.get(c.id);
     if (!row) continue;
     row.root.classList.toggle("hit", hit && res.caseId === c.id);
-    paintIcon(row.icon, pageUrl, TR.resolveBadge(c.badge, vars));
+    paintIcon(row.icon, pageUrl, TR.resolveBadge(c.badge, vars, page));
   }
   refs["badge-fallback"].classList.toggle("hit", sw.enabled && hit && res.caseId === null);
-  paintIcon(refs["fallback-icon"], pageUrl, TR.resolveBadge(rule.badge, vars));
+  paintIcon(refs["fallback-icon"], pageUrl, TR.resolveBadge(rule.badge, vars, page));
 }
 
 const lowerFirst = (s) => s.charAt(0).toLowerCase() + s.slice(1);
@@ -1215,7 +1270,7 @@ async function loadTeachTab() {
   teach.current = null;
 
   const page = tab && live.state !== "blocked" && live.state !== "noaccess"
-    ? await askTab(tab.id, { type: "harvest", want: "" })
+    ? await askTab(tab.id, { type: "harvest", want: "", extra: teachHints() })
     : null;
   if (!teach) return;
   if (!page) {
@@ -1244,6 +1299,7 @@ async function loadTeachTab() {
     want: prior?.want ?? guess?.title ?? page.title,
     look: prior?.look ?? guess?.look ?? null,
     hint: prior?.hint ?? null,
+    picked: mergePicked(prior?.picked, page.picked),
     // A guess isn't an example until it's edited or confirmed.
     guessed: !!guess,
   };
@@ -1267,7 +1323,8 @@ async function guessFor(tabId, page) {
     const sw = rule.badgeSwitch;
     const hasIcon = sw.enabled || !!TR.resolveBadge(rule.badge, {});
     const chosen = res.caseId ? sw.cases.find((c) => c.id === res.caseId)?.badge : rule.badge;
-    return { title: res.title, look: hasIcon ? TR.newLook(chosen) : null };
+    // As this tab gets it: badge text filled in, color taken from its label.
+    return { title: res.title, look: hasIcon ? TR.newLook({ ...(res.badge ?? chosen), colorFrom: "" }) : null };
   }
 
   if (!teach.saved.length) return null;
@@ -1279,8 +1336,11 @@ async function guessFor(tabId, page) {
   const keySource = lookFit?.mode === "switch"
     ? (lookFit.newVar ? { from: "element", selector: lookFit.newVar.selector, regex: "" } : fit.parts.find((p) => p.name === lookFit.on)?.source)
     : null;
-  const sources = [...variant.map((p) => p.source), keySource].filter((s) => s && s.from !== "builtin");
-  const res = await askTab(tabId, { type: "probe", sources });
+  // Named values, for badge text: the title's, and ones only the badge uses.
+  const named = lookFit ? [...fit.vars, ...(lookFit.textVars ?? [])].map((v) => ({ ...v, regex: v.regex ?? "" })) : [];
+  const sources = [...variant.map((p) => p.source), keySource, ...named].filter((s) => s && s.from !== "builtin");
+  const colorFrom = lookFit?.colorFrom?.selector;
+  const res = await askTab(tabId, { type: "probe", sources, colors: colorFrom ? [colorFrom] : [] });
   if (!res) return null;
   const valueOf = (src) => src.from === "builtin"
     ? (src.name === "title" ? page.title.replace(/\s+/g, " ").trim() : new URL(page.url).hostname)
@@ -1292,6 +1352,12 @@ async function guessFor(tabId, page) {
   if (lookFit?.mode === "switch") {
     const key = (keySource && valueOf(keySource) || "").toLowerCase();
     look = lookFit.cases.find((c) => c.value.toLowerCase() === key)?.look ?? TR.newLook();
+  }
+  if (look) {
+    // Examples hold the icon as this tab shows it, not the general rule.
+    const vars = Object.fromEntries(named.map((s) => [s.name, valueOf(s)]));
+    const shown = TR.resolveBadge(look, vars, { elementColor: () => res.colors?.[0] ?? null });
+    look = TR.newLook({ ...(shown ?? TR.newLook()), colorFrom: "" });
   }
   return { title: Infer.renderVariant(variant, valueOf), look };
 }
@@ -1332,10 +1398,11 @@ function teachTabChanged() {
 async function harvestWant() {
   const cur = teach?.current;
   if (!cur) return refit();
-  const page = await askTab(cur.tabId, { type: "harvest", want: cur.want });
+  const page = await askTab(cur.tabId, { type: "harvest", want: cur.want, extra: teachHints() });
   if (page && teach?.current === cur) {
     cur.elements = page.elements;
     cur.styled = page.styled ?? [];
+    cur.picked = mergePicked(cur.picked, page.picked);
     renderSuggestions();
   }
   refit();
@@ -1457,7 +1524,7 @@ function renderAsks(tabsChecked = 0) {
 
 // Turns an answer into an example from that tab.
 async function answerAsk(ask, title) {
-  const page = await askTab(ask.tab.id, { type: "harvest", want: title });
+  const page = await askTab(ask.tab.id, { type: "harvest", want: title, extra: teachHints() });
   if (!page || !teach) return toast("Couldn't read that tab. Try reloading it.");
   teach.saved = teach.saved.filter((e) => e.url !== page.url);
   teach.saved.push({ tabId: ask.tab.id, ...page, want: title });
@@ -1597,7 +1664,7 @@ async function saveSplit() {
     rules.push(rule);
     made.push(rule);
     const own = examples.filter((e) => g.examples.some((x) => x.url === e.url));
-    await chrome.storage.local.set({ [`examples:${rule.id}`]: own.map(({ url, title, elements, styled, meta, labels, want, look, hint }) => ({ url, title, elements, styled, meta, labels, want, look, hint })) });
+    await chrome.storage.local.set({ [`examples:${rule.id}`]: own.map(({ url, title, elements, styled, picked, meta, labels, want, look, hint }) => ({ url, title, elements, styled, picked, meta, labels, want, look, hint })) });
   }
   made.forEach(placeBySpecificity);
   save();
@@ -1665,7 +1732,7 @@ async function saveTeach() {
   save();
   renderList();
   // Keep the examples, so teaching this rule again starts from them.
-  const examples = teachExamples().map(({ url, title, elements, styled, meta, labels, want, look, hint }) => ({ url, title, elements, styled, meta, labels, want, look, hint }));
+  const examples = teachExamples().map(({ url, title, elements, styled, picked, meta, labels, want, look, hint }) => ({ url, title, elements, styled, picked, meta, labels, want, look, hint }));
   await chrome.storage.local.set({ [`examples:${rule.id}`]: examples });
   teach = null;
   select(rule.id);
@@ -1737,6 +1804,7 @@ async function renderScope() {
 // switches on to `vars` when that's new).
 function iconSettings(lookFit, vars) {
   if (!lookFit || lookFit.mode === "unknown") return {};
+  for (const v of lookFit.textVars ?? []) vars.push({ ...TR.newVar(), ...v });
   if (lookFit.mode === "always") {
     return { badge: TR.newLook(lookFit.look), badgeSwitch: { enabled: false, on: "", cases: [] } };
   }
@@ -1776,13 +1844,19 @@ function paintTeachPreview() {
   if (cur?.look) paintIcon($("#teach-icon-preview"), cur.url, TR.resolveBadge(cur.look, {}));
 }
 
-// Colored labels found on the page, as one-click icons. Picking one also
-// tells the inference that this label is what the icon depends on.
+// Colored labels found on the page, and ones picked on it, as one-click
+// icons, plus a button to pick another. Choosing one also tells the
+// inference that this label is what the icon follows: its color, or its text.
 function renderSuggestions() {
   const cur = teach?.current;
-  const list = cur?.styled ?? [];
-  $("#teach-suggest").hidden = !list.length;
-  $("#teach-suggest-chips").replaceChildren(...list.slice(0, 6).map((s) => {
+  const box = $("#teach-suggest");
+  box.hidden = !cur;
+  if (!cur) return;
+  const styled = cur.styled ?? [];
+  const picked = (cur.picked ?? []).filter((p) => p.color && !styled.some((s) => s.selector === p.selector));
+  const list = [...picked, ...styled].slice(0, 6);
+  $(".suggest-label", box).textContent = list.length ? "Colors on this page" : "Have the icon follow a label on the page";
+  const chips = list.map((s) => {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "suggest-chip";
@@ -1802,23 +1876,85 @@ function renderSuggestions() {
     }
     b.addEventListener("click", () => {
       confirmGuess();
-      // Check again on click: the badge style may have changed since drawing.
-      if (cur.look && cur.look.style === "none") {
-        // Outline (adding a thin one if there's neither) and/or tint take the color.
-        const look = { ...cur.look };
-        if (look.outline === "none" && look.tint === "none") look.outline = "thin";
-        if (look.outline !== "none") look.outlineColor = s.color;
-        if (look.tint === "color") look.tintColor = s.color;
-        cur.look = TR.newLook(look);
-      } else {
-        cur.look = TR.newLook({ ...(cur.look ?? {}), style: cur.look?.style === "text" ? "text" : "dot", color: s.color });
-      }
+      useColor(cur, s.color);
       cur.hint = s.selector;
       renderTeachIcon();
       refit();
     });
     return b;
-  }));
+  });
+  const pick = Object.assign(document.createElement("button"), { type: "button", className: "suggest-chip pick" });
+  pick.dataset.pickKey = "teach-pick";
+  pick.classList.toggle("active", picking?.key === "teach-pick");
+  pick.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5l9.5 4-4 1.5-1.5 4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><span class="suggest-text"></span>';
+  $(".suggest-text", pick).textContent = picking?.key === "teach-pick" ? "Picking…" : "Pick on page";
+  pick.title = "Click a label on the page, like a status, for the icon to follow";
+  pick.addEventListener("click", () => pickForTeach(cur));
+  $("#teach-suggest-chips").replaceChildren(...chips, pick);
+}
+
+// Puts a color on the example's icon: the badge, or with no badge the
+// outline (adding a thin one if there's neither) and/or tint.
+function useColor(cur, color) {
+  if (cur.look && cur.look.style === "none") {
+    const look = { ...cur.look };
+    if (look.outline === "none" && look.tint === "none") look.outline = "thin";
+    if (look.outline !== "none") look.outlineColor = color;
+    if (look.tint === "color") look.tintColor = color;
+    cur.look = TR.newLook(look);
+  } else {
+    cur.look = TR.newLook({ ...(cur.look ?? {}), style: cur.look?.style === "text" ? "text" : "dot", color });
+  }
+}
+
+// Picks a label on the example's own tab for the icon to follow.
+async function pickForTeach(cur) {
+  if (!cur?.tabId) return;
+  try {
+    const tab = await chrome.tabs.get(cur.tabId);
+    await pickOnTab(tab, "teach-pick", "color", async (msg) => {
+      if (teach?.current !== cur) return;
+      confirmGuess();
+      cur.hint = msg.selector;
+      cur.picked = mergePicked(cur.picked, [{ selector: msg.selector, selectors: [msg.selector], text: (msg.text || "").slice(0, 200), color: msg.color }]);
+      if (msg.color) {
+        useColor(cur, msg.color);
+        toast(`The icon follows “${clip(msg.text || msg.selector, 40)}”.`);
+      } else {
+        if (!cur.look) cur.look = TR.newLook({ style: "dot" });
+        toast("That has no color of its own, so the icon can only follow its text. To use a color, pick the colored label (↑ chooses the box around the text).");
+      }
+      renderTeachIcon();
+      await fillPicked();
+      refit();
+    });
+    renderSuggestions();
+  } catch {
+    setPicking(null);
+    toast("Couldn't open the picker on this tab. Try reloading it.");
+  }
+}
+
+// Labels the user picked or chose, on any example: looked up on every other
+// example's page too, so the inference can compare them.
+const teachHints = () => [...new Set([...(teach?.saved ?? []), teach?.current].map((e) => e?.hint).filter(Boolean))];
+
+function mergePicked(a = [], b = []) {
+  const out = (a ?? []).filter((p) => !(b ?? []).some((q) => q.selector === p.selector));
+  return [...out, ...(b ?? [])];
+}
+
+// Fills in picked labels on earlier examples whose tabs are still open.
+async function fillPicked() {
+  const hints = teachHints();
+  const open = await chrome.tabs.query({});
+  for (const ex of teach?.saved ?? []) {
+    const missing = hints.filter((h) => !ex.picked?.some((p) => p.selector === h));
+    if (!missing.length) continue;
+    const tab = open.find((t) => t.id === ex.tabId && t.url === ex.url) ?? open.find((t) => t.url === ex.url);
+    const found = tab && await askTab(tab.id, { type: "picked", selectors: missing });
+    if (found) ex.picked = mergePicked(ex.picked, found);
+  }
 }
 
 // The "Icon" section of the result: what the rule will do with icons.
@@ -1829,25 +1965,35 @@ function renderTeachLook() {
   box.hidden = !lookFit;
   if (!lookFit) return;
   const pageUrl = teach.current?.url ?? teachExamples().at(-1)?.url ?? "";
+  // Drawn as on the current tab: its label colors, and badge text as typed there.
+  const here = teach.current;
+  const page = { elementColor: (sel) => [...(here?.picked ?? []), ...(here?.styled ?? [])].find((e) => e.selector === sel || e.selectors?.includes(sel))?.color ?? null };
+  const shown = (look) => (/\{\w+\}/.test(look.text) && here?.look?.style === "text" ? { ...look, text: here.look.text } : look);
   const row = (look, label) => {
     const r = document.createElement("div");
     r.className = "look-row";
     const c = Object.assign(document.createElement("canvas"), { width: 32, height: 32, className: "case-icon" });
-    paintIcon(c, pageUrl, TR.resolveBadge(look, {}));
+    paintIcon(c, pageUrl, TR.resolveBadge(shown(look), {}, page));
     r.append(c, Object.assign(document.createElement("span"), { textContent: label }));
     return r;
   };
+  const fromPage = [];
+  if (lookFit.colorFrom) fromPage.push(`colored like “${clip(lookFit.colorFrom.text || lookFit.colorFrom.selector, 30)}” on each page`);
+  const texts = lookFit.mode === "always" ? [lookFit.look] : lookFit.mode === "switch" ? lookFit.cases.map((c) => c.look) : [];
+  const template = texts.find((l) => l.style === "text" && /\{\w+\}/.test(l.text))?.text;
+  if (template) fromPage.push(`with the text ${template}`);
+  const note = fromPage.length ? `, ${fromPage.join(", ")}` : "";
   if (lookFit.mode === "always") {
-    body.replaceChildren(row(lookFit.look, "Every tab gets this icon."));
+    body.replaceChildren(row(lookFit.look, `Every tab gets this icon${note}.`));
   } else if (lookFit.mode === "switch") {
     const intro = Object.assign(document.createElement("p"), { className: "look-intro" });
-    intro.append("Depends on ", Object.assign(document.createElement("code"), { textContent: `{${lookFit.on}}` }), lookFit.newVar ? ` (read from ${lookFit.newVar.selector}):` : ":");
+    intro.append("Depends on ", Object.assign(document.createElement("code"), { textContent: `{${lookFit.on}}` }), lookFit.newVar ? ` (read from ${lookFit.newVar.selector})` : "", `${note}:`);
     body.replaceChildren(intro, ...lookFit.cases.map((c) => row(c.look, `When it's “${c.value}”`)),
       row(TR.newLook(), "Anything else: no badge"));
   } else {
     body.replaceChildren(Object.assign(document.createElement("p"), {
       className: "hint err",
-      textContent: "Nothing on these pages explains why their icons differ. Pick a color from “Colors on this page” so it knows which label to follow.",
+      textContent: "Nothing on these pages explains why their icons differ. Choose a color from the page, or pick the label the icon should follow, so it knows what to go by.",
     }));
   }
 }

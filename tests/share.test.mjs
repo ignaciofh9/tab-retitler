@@ -24,7 +24,7 @@ const look = () => TR.newLook({
   style: any(["none", "dot", "text"]), color: color(), text: any(["", "!", "✓", "NEW"]),
   shape: any(["round", "square", "corner"]), position: any(["br", "bl", "tr", "tl"]), size: any(["s", "m", "l"]),
   outline: any(["none", "thin", "thick"]), outlineColor: color(), tint: any(["none", "color", "gray", "fade"]),
-  tintColor: color(), tintAmount: Math.floor(rand() * 101),
+  tintColor: color(), tintAmount: Math.floor(rand() * 101), colorFrom: any(["", "", ".status-pill", "[data-testid=\"priority\"] span"]),
 });
 const randomRule = () => TR.normalizeRule({
   ...TR.newRule(), name: (text() || "Rule").slice(0, 200), enabled: rand() < 0.7,
@@ -64,6 +64,11 @@ for (let n = 0; n < 300; n++) {
   });
 }
 check(mismatches === 0, "300 random batches survive code and JSON round trips", `${mismatches} mismatches`);
+
+// A code made by version 0.7.1 (format 3), from before page colors.
+const [v3Rule] = await Share.parse("TR2:Y2YUZA_JTM5OLSkWLClKTM7WS61IzC3ISdVLzs_lSLQoK0szzDHgrc4rza1VqC7JLMlJreXUTyrKLy9O1ddiZM4rzWVgEIbyox11o2K1dTViUrQ1GRgYWBmZGRgZSqYAAA");
+check(v3Rule?.name === "Tickets" && v3Rule.path === "/browse/*" && v3Rule.badge.style === "dot" && v3Rule.badge.outline === "thin"
+  && v3Rule.badge.colorFrom === "", "format 3 codes still import", JSON.stringify(v3Rule));
 
 // A code made by version 0.6.0 (format 2), from before page scopes.
 const [v2Rule] = await Share.parse("TR2:Y2Jk5ArOyC9QyCxJzS0WKM7IL9BLrUjMLchJ1UvOz-VIyy0xKirNSeWpLs4urVWozkvMTa1lYi7OLmUx4Moqzs_LSbEqzi7ljYt21I2K1dbViEnR1mRgYGABKWRlYA8oyk8pTS5hYGAUcE8sSknNUyjJz88pVihOLWENAbEYGOb7AAA");
