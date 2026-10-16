@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tab Retitler</title>
+  <link rel="icon" href="icon-128.png">
+  <style>
+    :root { color-scheme: light dark; --text: #1b1b19; --muted: #6b6b66; --bg: #ffffff; --line: #e4e4e0; --accent: #2c55dc; }
+    @media (prefers-color-scheme: dark) { :root { --text: #ececea; --muted: #a3a39e; --bg: #131312; --line: #2e2e2c; --accent: #9db4ff; } }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 720px; margin: 0 auto; padding: 56px 20px 64px; }
+    .head { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
+    .head img { width: 64px; height: 64px; }
+    h1 { margin: 0; font-size: 34px; letter-spacing: -0.02em; }
+    p { margin: 0 0 14px; }
+    .lede { font-size: 19px; color: var(--muted); }
+    .shot { width: 100%; border-radius: 12px; border: 1px solid var(--line); margin: 18px 0 22px; }
+    a { color: var(--accent); }
+    .links { display: flex; gap: 20px; flex-wrap: wrap; padding-top: 14px; border-top: 1px solid var(--line); }
+  </style>
+</head>
+<body>
+<main>
+  <div class="head"><img src="icon-128.png" alt=""><h1>Tab Retitler</h1></div>
+  <p class="lede">Rename tabs and badge their icons using rules based on each page’s URL and content. Teach it by example in Chrome’s side panel.</p>
+  <img class="shot" src="screenshot-1.png" alt="Renamed tabs with status dots, and the Tab Retitler side panel">
+  <p>Type the title you want for a tab and Tab Retitler works out where each part comes from: the address, the page title, or text on the page. Give it examples from a few tabs and it narrows down to the rule that fits them all. Icons can follow the page too, like a green dot when a task is done.</p>
+  <p>Everything stays on your computer. There's no account, no analytics, and it only runs on sites you allow.</p>
+  <div class="links">
+    <a href="https://github.com/ignaciofh9/tab-retitler">Source code</a>
+    <a href="privacy-policy.html">Privacy policy</a>
+  </div>
+</main>
+</body>
+</html>

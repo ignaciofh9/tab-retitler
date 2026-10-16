@@ -1,0 +1,8 @@
+# Build output: run ./build.sh to make the store package.
+dist/
+*.zip
+
+# Large intermediate renders; store-assets/render-icons.sh makes them again.
+store-assets/src/*.png
+
+.DS_Store

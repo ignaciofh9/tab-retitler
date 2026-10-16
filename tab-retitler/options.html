@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tab Retitler</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 19V9a3 3 0 0 1 3-3h7a3 3 0 0 1 3 3v2h2a3 3 0 0 1 3 3v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M1.5 19h21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        <circle cx="17.5" cy="6" r="3.2" fill="var(--accent)"/>
+      </svg>
+      <h1>Tab Retitler</h1>
+    </div>
+    <div class="topbar-actions">
+      <span id="save-state" class="save-state" aria-live="polite"></span>
+      <button class="btn ghost topbar-btn" id="import-btn" type="button" title="Import rules from a code, JSON or file"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7M5 6.5l3 3 3-3M3 10.5v2a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Import</span></button>
+      <button class="btn ghost topbar-btn" id="share-btn" type="button" title="Share rules as a code, JSON or file"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 10V2.5M5 5.5l3-3 3 3M3 8.5v4a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Share</span></button>
+      <button class="btn icon panel-only" id="open-full" type="button" title="Open in a full tab" aria-label="Open in a full tab">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 2.5h4.5V7M13.5 2.5L8 8M6.5 3.5h-3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <section class="this-tab panel-only" id="this-tab" aria-label="This tab">
+        <div class="this-tab-head">
+          <img class="this-tab-icon" id="this-tab-icon" alt="">
+          <div class="this-tab-text">
+            <div class="this-tab-title" id="this-tab-title"></div>
+            <div class="this-tab-host" id="this-tab-host"></div>
+          </div>
+        </div>
+        <p class="this-tab-status" id="this-tab-status"></p>
+        <div class="this-tab-actions" id="this-tab-actions"></div>
+      </section>
+      <div class="sidebar-head">
+        <h2>Rules</h2>
+        <button class="btn primary sm" id="add-rule" type="button">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          New rule
+        </button>
+      </div>
+      <div id="rule-list" class="rule-list" aria-label="Rules"></div>
+      <p class="sidebar-hint">On each tab, the first turned-on rule that matches is used. Drag rules to reorder them.</p>
+    </aside>
+
+    <main id="editor" class="editor"></main>
+
+    <main id="teach" class="editor teach panel-only" aria-label="Build a rule from examples">
+      <div class="rule-head">
+        <button class="btn icon" type="button" id="teach-back" title="Back" aria-label="Back">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <h2 class="teach-heading" id="teach-heading">Build from examples</h2>
+      </div>
+      <p class="teach-intro">Type the title you want for this tab. Tab Retitler finds where each part comes from and writes the rule. Switch to more tabs on the site and do the same to make it work for all of them.</p>
+
+      <section class="card">
+        <div class="teach-tab">
+          <img class="this-tab-icon" id="teach-icon" alt="">
+          <div class="this-tab-text">
+            <div class="this-tab-host" id="teach-host"></div>
+            <div class="teach-original" id="teach-original"></div>
+          </div>
+        </div>
+        <div class="field">
+          <label for="teach-want">Title you want for this tab</label>
+          <input id="teach-want" class="title-input" spellcheck="false" autocomplete="off">
+          <p class="hint" id="teach-hint">Start from the page's own title and edit it into what you want.</p>
+        </div>
+
+        <div class="teach-icon" id="teach-icon">
+          <div class="teach-icon-head">
+            <canvas class="case-icon" id="teach-icon-preview" width="32" height="32" aria-hidden="true"></canvas>
+            <span class="teach-icon-label">Icon for this tab</span>
+            <button class="btn ghost sm" type="button" id="teach-icon-add">Teach an icon</button>
+            <button class="btn icon" type="button" id="teach-icon-remove" title="Don't teach an icon for this tab" aria-label="Don't teach an icon for this tab" hidden>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+          <div id="teach-icon-look" hidden></div>
+          <div class="suggest" id="teach-suggest" hidden>
+            <span class="suggest-label">Colors on this page</span>
+            <div class="suggest-chips" id="teach-suggest-chips"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" id="teach-result" hidden>
+        <div class="teach-count" id="teach-count"></div>
+        <h3 class="teach-sub">Where each part comes from</h3>
+        <div class="breakdown" id="teach-breakdown"></div>
+        <p class="teach-undecided" id="teach-undecided"></p>
+        <div class="teach-look" id="teach-look" hidden>
+          <h3 class="teach-sub">Icon</h3>
+          <div id="teach-look-body"></div>
+        </div>
+        <div class="teach-asks" id="teach-asks" hidden>
+          <h3 class="teach-sub">Which is right?</h3>
+          <p class="hint">The possible rules give different titles on these open tabs. Pick the right one and it becomes an example.</p>
+          <div class="ask-list" id="teach-ask-list"></div>
+        </div>
+        <h3 class="teach-sub">Examples</h3>
+        <ol class="teach-examples" id="teach-examples"></ol>
+        <p class="hint" id="teach-note"></p>
+        <div class="teach-actions">
+          <button class="btn primary" type="button" id="teach-save">Create rule</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="dialog" id="share-dialog" aria-labelledby="share-heading">
+    <header class="dialog-head">
+      <h2 id="share-heading">Share rules</h2>
+      <button class="btn icon" type="button" data-close title="Close" aria-label="Close"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+    </header>
+    <div class="dialog-body">
+      <div class="pick-head">
+        <span class="field-label">Rules to share</span>
+        <button class="btn ghost sm" type="button" id="share-all">Select all</button>
+      </div>
+      <ul class="pick-list" id="share-list"></ul>
+      <div class="segmented" id="share-format" role="radiogroup" aria-label="Format">
+        <button type="button" role="radio" data-value="code">Code</button>
+        <button type="button" role="radio" data-value="json">JSON</button>
+      </div>
+      <textarea class="mono share-output" id="share-output" readonly spellcheck="false" aria-label="Shared rules"></textarea>
+      <p class="hint" id="share-info"></p>
+    </div>
+    <footer class="dialog-foot">
+      <button class="btn" type="button" id="share-download">Download .json</button>
+      <button class="btn primary" type="button" id="share-copy">Copy</button>
+    </footer>
+  </dialog>
+
+  <dialog class="dialog" id="import-dialog" aria-labelledby="import-heading">
+    <header class="dialog-head">
+      <h2 id="import-heading">Import rules</h2>
+      <button class="btn icon" type="button" data-close title="Close" aria-label="Close"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+    </header>
+    <div class="dialog-body">
+      <div class="drop" id="import-drop">
+        <textarea class="mono" id="import-input" spellcheck="false" placeholder="Paste a code (TR2:…) or JSON here" aria-label="Code or JSON to import"></textarea>
+        <div class="drop-foot">
+          <span class="hint">or drop a file here</span>
+          <button class="btn ghost sm" type="button" id="import-choose">Choose file…</button>
+          <input type="file" id="import-file" accept=".json,.txt,application/json,text/plain" hidden>
+        </div>
+      </div>
+      <p class="hint err" id="import-error" hidden></p>
+      <ul class="pick-list preview" id="import-list"></ul>
+      <p class="hint" id="import-note" hidden>Tab Retitler will ask for access to each site when you import.</p>
+    </div>
+    <footer class="dialog-foot">
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn primary" type="button" id="import-go" disabled>Import</button>
+    </footer>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden>
+    <span id="toast-text"></span>
+    <button id="toast-action" class="toast-action" type="button" hidden></button>
+  </div>
+
+  <template id="empty-tpl">
+    <div class="empty-state">
+      <div class="empty-art" aria-hidden="true">
+        <div class="mini-tab"><span class="mini-icon"></span><span class="mini-line"></span></div>
+        <div class="mini-tab active"><span class="mini-icon badged"></span><span class="mini-line long"></span></div>
+      </div>
+      <h2>Rename tabs your way</h2>
+      <p>Create a rule for a site, pull values out of its URL or page, and turn them into a cleaner tab title and a badge on its icon.</p>
+      <button class="btn primary" type="button" data-action="add-rule">Create a rule</button>
+    </div>
+  </template>
+
+  <template id="editor-tpl">
+    <div class="rule-head">
+      <button class="btn icon panel-only" type="button" data-action="back" title="All rules" aria-label="Back to all rules">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <input class="rule-name" data-field="name" aria-label="Rule name" placeholder="Rule name" spellcheck="false">
+      <label class="switch" title="Turn this rule on or off">
+        <input type="checkbox" data-field="enabled">
+        <span class="track"></span>
+        <span class="switch-label" data-ref="enabled-label">On</span>
+      </label>
+      <button class="btn icon" type="button" data-action="share" title="Share this rule" aria-label="Share this rule">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 10V2.5M5 5.5l3-3 3 3M3 8.5v4a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="btn icon danger" type="button" data-action="delete" title="Delete rule" aria-label="Delete rule">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div class="live" data-ref="live" role="status">
+      <span class="live-dot" aria-hidden="true"></span>
+      <span class="live-text" data-ref="live-text"></span>
+      <button class="btn sm live-teach" type="button" data-action="teach" hidden>Teach with this tab</button>
+    </div>
+    <div class="editor-grid">
+      <div class="editor-main">
+
+        <section class="card">
+          <header class="card-head">
+            <span class="step">1</span>
+            <div><h3>Where</h3><p>Which tabs this rule looks at.</p></div>
+          </header>
+          <div class="field">
+            <label for="f-host">Site</label>
+            <div class="input-row">
+              <input id="f-host" data-ref="host" placeholder="example.com or *.example.com" spellcheck="false" autocomplete="off">
+              <div class="access" data-ref="access"></div>
+            </div>
+            <p class="hint" data-ref="host-hint">Start with *. to include every subdomain.</p>
+          </div>
+          <div class="field">
+            <label for="f-filter">Only URLs matching <span class="opt">optional</span></label>
+            <input id="f-filter" class="mono" data-field="urlFilter" placeholder="/products/" spellcheck="false" autocomplete="off">
+            <p class="hint" data-ref="filter-hint">A pattern (regular expression) that must appear somewhere in the URL.</p>
+          </div>
+        </section>
+
+        <section class="card">
+          <header class="card-head">
+            <span class="step">2</span>
+            <div><h3>Values</h3><p>Pull text out of the URL, title or page. Put ( ) around the part to keep: <code>Order #(\d+)</code> turns “Order #4521” into 4521.</p></div>
+          </header>
+          <div class="vars" data-ref="vars"></div>
+          <button class="btn ghost sm add-var" type="button" data-action="add-var">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            Add a value
+          </button>
+        </section>
+
+        <section class="card">
+          <header class="card-head">
+            <span class="step">3</span>
+            <div><h3>Tab title</h3><p>Combine values with any text. Leave empty to keep the page's own title.</p></div>
+          </header>
+          <input class="mono title-input" data-field="title" data-ref="title" placeholder="{num} · {title}" spellcheck="false" autocomplete="off" aria-label="Title template">
+          <div class="chips" data-ref="chips" aria-label="Insert a value"></div>
+        </section>
+
+        <section class="card">
+          <header class="card-head">
+            <span class="step">4</span>
+            <div><h3>Icon badge</h3><p>Drawn in the corner of the site's own icon.</p></div>
+          </header>
+          <div class="segmented" data-ref="badge-mode" role="radiogroup" aria-label="Badge mode">
+            <button type="button" role="radio" data-value="always">Same on every tab</button>
+            <button type="button" role="radio" data-value="switch">Depends on a value</button>
+          </div>
+
+          <div class="badge-switch" data-ref="badge-switch">
+            <div class="switch-on">
+              <label for="f-switch-on">Choose the badge using</label>
+              <select id="f-switch-on" class="mono" data-ref="switch-on"></select>
+            </div>
+            <div class="cases" data-ref="cases"></div>
+            <button class="btn ghost sm add-case" type="button" data-action="add-case">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              Add a case
+            </button>
+          </div>
+
+          <div class="case fallback" data-ref="badge-fallback">
+            <canvas class="case-icon" width="32" height="32" data-ref="fallback-icon" aria-hidden="true"></canvas>
+            <div class="case-body">
+              <div class="case-when" data-ref="fallback-label"><span class="when">Otherwise</span><span class="hit-tag" title="No case matches the current tab, so it uses this badge">On this tab</span></div>
+              <div data-ref="badge-default"></div>
+            </div>
+          </div>
+          <p class="hint" data-ref="badge-hint">Up to 3 characters of text. Values like {num} work too.</p>
+        </section>
+      </div>
+
+    </div>
+  </template>
+
+  <template id="badge-editor-tpl">
+    <div class="badge-editor">
+      <div class="be-main">
+        <div class="segmented sm" data-be="style" aria-label="Badge">
+          <button data-value="none">None</button>
+          <button data-value="dot">Dot</button>
+          <button data-value="text">Text</button>
+        </div>
+        <div class="swatches" data-be-colors="color" data-badge-only role="radiogroup" aria-label="Badge color"></div>
+        <input class="mono badge-text" placeholder="NEW" aria-label="Badge text, up to 3 characters" spellcheck="false" autocomplete="off">
+        <button type="button" class="be-more" aria-expanded="false">
+          <span class="be-summary"></span>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+
+      <div class="be-advanced" hidden>
+        <div class="be-row" data-badge-only>
+          <span class="be-label">Shape</span>
+          <div class="segmented sm icons" data-be="shape" aria-label="Badge shape">
+            <button data-value="round" title="Round"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" fill="currentColor"/></svg></button>
+            <button data-value="square" title="Square"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5" fill="currentColor"/></svg></button>
+            <button data-value="corner" title="Corner"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M14 3v11H3z" fill="currentColor"/></svg></button>
+          </div>
+        </div>
+        <div class="be-row" data-badge-only>
+          <span class="be-label">Corner</span>
+          <div class="corner-pick" data-be="position" aria-label="Badge corner">
+            <button data-value="tl" title="Top left"></button>
+            <button data-value="tr" title="Top right"></button>
+            <button data-value="bl" title="Bottom left"></button>
+            <button data-value="br" title="Bottom right"></button>
+          </div>
+        </div>
+        <div class="be-row" data-badge-only>
+          <span class="be-label">Size</span>
+          <div class="segmented sm" data-be="size" aria-label="Badge size">
+            <button data-value="s">Small</button>
+            <button data-value="m">Medium</button>
+            <button data-value="l">Large</button>
+          </div>
+        </div>
+        <div class="be-row">
+          <span class="be-label">Outline</span>
+          <div class="segmented sm" data-be="outline" aria-label="Outline">
+            <button data-value="none">None</button>
+            <button data-value="thin">Thin</button>
+            <button data-value="thick">Thick</button>
+          </div>
+          <div class="swatches compact" data-be-colors="outlineColor" role="radiogroup" aria-label="Outline color"></div>
+        </div>
+        <div class="be-row">
+          <span class="be-label">Tint</span>
+          <div class="segmented sm" data-be="tint" aria-label="Tint">
+            <button data-value="none">None</button>
+            <button data-value="color">Color</button>
+            <button data-value="gray">Gray</button>
+            <button data-value="fade">Fade</button>
+          </div>
+          <div class="swatches compact" data-be-colors="tintColor" role="radiogroup" aria-label="Tint color"></div>
+          <label class="be-amount" title="Strength">
+            <input type="range" min="10" max="90" step="5" aria-label="Tint strength">
+            <span></span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <template id="case-tpl">
+    <div class="case">
+      <canvas class="case-icon" width="32" height="32" aria-hidden="true"></canvas>
+      <div class="case-body">
+        <div class="case-when">
+          <span class="when">When <code data-ref="subject"></code></span>
+          <select data-cf="op" aria-label="Comparison">
+            <option value="is">is</option>
+            <option value="contains">contains</option>
+            <option value="starts">starts with</option>
+            <option value="matches">matches pattern</option>
+            <option value="empty">is empty</option>
+          </select>
+          <input data-cf="value" placeholder="Done" spellcheck="false" autocomplete="off" aria-label="Value to compare with">
+          <div class="case-actions">
+            <span class="hit-tag" title="The current tab uses this case">On this tab</span>
+            <button class="btn icon" type="button" data-action="up" title="Move up" aria-label="Move case up">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 10l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="btn icon" type="button" data-action="remove" title="Remove case" aria-label="Remove case">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+        </div>
+        <div data-ref="editor"></div>
+      </div>
+    </div>
+  </template>
+
+  <template id="var-tpl">
+    <div class="var">
+      <div class="var-top">
+        <div class="var-name-wrap">
+          <span class="brace">{</span><input class="var-name mono" data-vf="name" placeholder="name" spellcheck="false" autocomplete="off" aria-label="Value name"><span class="brace">}</span>
+        </div>
+        <span class="from">from</span>
+        <select data-vf="from" aria-label="Where to read it from">
+          <option value="url">URL</option>
+          <option value="title">Page title</option>
+          <option value="element">An element on the page</option>
+          <option value="page">Anywhere on the page</option>
+        </select>
+        <button class="btn icon" type="button" data-action="remove-var" title="Remove value" aria-label="Remove value">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="var-grid">
+        <div class="field" data-ref="selector-field">
+          <label>CSS selector</label>
+          <div class="input-row">
+            <input class="mono" data-vf="selector" placeholder="h1 or #item-id" spellcheck="false" autocomplete="off">
+            <button class="btn pick" type="button" data-action="pick" title="Point at the element on the page instead of typing a selector">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              <span>Pick</span>
+            </button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Pattern <span class="opt">optional</span></label>
+          <input class="mono" data-vf="regex" placeholder="#(\d+)" spellcheck="false" autocomplete="off">
+        </div>
+      </div>
+      <div class="var-change">
+        <span class="var-change-label">Then</span>
+        <select data-vf="transform" aria-label="Change its case">
+          <option value="none">Keep case as is</option>
+          <option value="lower">lowercase</option>
+          <option value="upper">UPPERCASE</option>
+          <option value="capitalize">Sentence case</option>
+          <option value="title">Title Case</option>
+        </select>
+        <label class="check"><input type="checkbox" data-vf="spaces"> Turn - and _ into spaces</label>
+      </div>
+      <div class="var-foot">
+        <label class="check"><input type="checkbox" data-vf="required"> Only apply the rule when this is found</label>
+        <span class="var-result" data-ref="var-result"></span>
+      </div>
+      <p class="hint err" data-ref="var-err" hidden></p>
+    </div>
+  </template>
+
+  <script src="preview-shim.js"></script>
+  <script src="shared.js"></script>
+  <script src="infer.js"></script>
+  <script src="share.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
