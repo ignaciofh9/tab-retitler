@@ -10,9 +10,12 @@ const ICON_SIZE = 64;
 // The toolbar button opens the editor in the side panel, next to the page.
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
-chrome.runtime.onInstalled.addListener(({ reason }) => {
+chrome.runtime.onInstalled.addListener(async ({ reason }) => {
   if (reason === "install") chrome.runtime.openOptionsPage();
-  syncContentScripts();
+  await syncContentScripts();
+  // After an update or reload, the old copies in open tabs put their pages
+  // back as they were, so apply the rules there again.
+  if (reason === "update") reapplyInOpenTabs();
 });
 chrome.runtime.onStartup.addListener(syncContentScripts);
 chrome.permissions.onAdded.addListener(syncContentScripts);
@@ -48,8 +51,18 @@ async function sync() {
   ]);
 
   // Tabs that were already open on a newly added site don't have the script yet.
-  const tabs = await chrome.tabs.query({ url: matches });
-  for (const tab of tabs) {
+  await reapplyInOpenTabs(matches);
+}
+
+// Runs the tab script in open tabs on the registered sites. Tabs that already
+// have a working copy ignore it.
+async function reapplyInOpenTabs(matches) {
+  if (!matches) {
+    const [current] = await chrome.scripting.getRegisteredContentScripts({ ids: [SCRIPT_ID] });
+    matches = current?.matches ?? [];
+  }
+  if (!matches.length) return;
+  for (const tab of await chrome.tabs.query({ url: matches })) {
     chrome.scripting.executeScript({ target: { tabId: tab.id }, files: SCRIPT_FILES }).catch(() => {});
   }
 }

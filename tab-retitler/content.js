@@ -1,10 +1,14 @@
 // Runs in tabs on sites the user has added. TR comes from shared.js.
-// Re-applies whenever rules change, so edits show up in open tabs right away.
+// Re-applies whenever rules change, so edits show up in open tabs right away,
+// and puts the page back the way it was if the extension goes away.
 
 (() => {
-  // The background worker may inject this into a tab that already has it.
-  if (self.__tabRetitlerLoaded) return;
-  self.__tabRetitlerLoaded = true;
+  // The background worker may inject this into a tab that already has it. A
+  // copy that can still reach the extension keeps going; one left behind by
+  // an update or reload hands over to this one.
+  const previous = self.__tabRetitler;
+  if (previous?.alive()) return;
+  previous?.stop();
 
   const original = {
     title: document.title,
@@ -13,6 +17,27 @@
   };
   let ourIcon = null;
   let run = 0;
+  let stopped = false;
+
+  // Whether this copy can still reach the extension. It can't once the
+  // extension is removed, turned off, reloaded or updated.
+  const alive = () => {
+    if (stopped) return false;
+    try { return !!chrome.runtime?.id; } catch { return false; }
+  };
+
+  function stop() {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(watch);
+    document.title = original.title;
+    restoreIcon();
+  }
+
+  // Chrome gives no notice when an extension goes away, so check now and
+  // then (a cheap property read) and undo the changes when it has.
+  const watch = setInterval(() => alive() || stop(), 2000);
+  self.__tabRetitler = { alive, stop };
 
   const ctx = {
     get url() { return location.href; },
@@ -27,8 +52,15 @@
   };
 
   async function apply() {
+    if (stopped) return;
     const thisRun = ++run;
-    const { rules = [] } = await chrome.storage.local.get("rules");
+    let rules = [];
+    try {
+      ({ rules = [] } = await chrome.storage.local.get("rules"));
+    } catch {
+      return stop(); // the extension is gone
+    }
+    if (stopped) return;
     const result = TR.firstMatch(rules, ctx);
     document.title = result ? result.title : original.title;
 
@@ -42,7 +74,7 @@
         pageUrl: location.href,
         badge: result.badge,
       });
-      if (dataUrl && thisRun === run) showIcon(dataUrl);
+      if (dataUrl && thisRun === run && !stopped) showIcon(dataUrl);
     } catch {
       // Extension was reloaded or removed; this copy of the script is orphaned.
     }

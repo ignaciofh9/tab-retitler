@@ -157,7 +157,15 @@
   for (const [type, fn] of listeners) window.addEventListener(type, fn, true);
   bar.querySelector("button").addEventListener("click", cancel);
 
+  // If the extension goes away mid-pick, take the overlay down.
+  const watch = setInterval(() => {
+    let ok = false;
+    try { ok = !!chrome.runtime?.id; } catch {}
+    if (!ok) teardown();
+  }, 2000);
+
   function teardown() {
+    clearInterval(watch);
     for (const [type, fn] of listeners) window.removeEventListener(type, fn, true);
     host.remove();
     self.__tabRetitlerPicking = false;
